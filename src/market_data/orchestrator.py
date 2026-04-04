@@ -44,6 +44,7 @@ DATA_DIR = Path("data")
 
 DEFAULT_BATCH_SIZE = 50
 SLEEP_BETWEEN_CALLS = 5  # seconds; be polite to the yfinance endpoint
+TICKER_REFRESH_DAYS = 90
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +57,47 @@ def load_state() -> dict:
         return {
             "onboarded": raw.get("onboarded", []),
             "last_run": raw.get("last_run"),
+            "last_ticker_refresh": raw.get("last_ticker_refresh"),
         }
-    return {"onboarded": [], "last_run": None}
+    return {"onboarded": [], "last_run": None, "last_ticker_refresh": None}
 
 
 def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2, default=str))
+
+
+# ---------------------------------------------------------------------------
+# Ticker list refresh
+# ---------------------------------------------------------------------------
+
+def maybe_refresh_tickers(
+    state: dict,
+    tickers_path: Path,
+    today: date,
+) -> bool:
+    """
+    Refresh tickers.csv if last_ticker_refresh is absent or >90 days ago.
+    Returns True if a refresh was performed.
+
+    Failures are non-fatal: if the iShares site is down, the pipeline continues
+    with the existing tickers.csv and logs a warning.
+    """
+    last_raw = state.get("last_ticker_refresh")
+    if last_raw:
+        days_since = (today - date.fromisoformat(last_raw)).days
+        if days_since < TICKER_REFRESH_DAYS:
+            print(f"  Ticker list is fresh ({days_since}d old, threshold {TICKER_REFRESH_DAYS}d)")
+            return False
+
+    print(f"\nRefreshing ticker list (last refresh: {last_raw or 'never'})...")
+    try:
+        from market_data import fetch_tickers  # noqa: PLC0415
+        fetch_tickers.run(tickers_path, today=today.isoformat())
+        print("  Ticker list refreshed successfully.")
+        return True
+    except Exception as exc:
+        print(f"  WARNING: Ticker refresh failed: {exc}. Continuing with existing list.")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -182,14 +218,18 @@ def run(batch_size: int, skip_update: bool, run_merge: bool) -> None:
         date.fromisoformat(state["last_run"]) if state["last_run"] else None
     )
 
+    # --- 0. Auto-refresh ticker list if stale ---
+    refreshed = maybe_refresh_tickers(state, TICKERS_FILE, today)
+
     all_tickers = load_ordered_tickers()
     pending = [t for t in all_tickers if t not in onboarded]
 
     print(f"\nmarket_data orchestrator  —  {today}")
-    print(f"  Tickers in list : {len(all_tickers)}")
+    print(f"  Tickers in list  : {len(all_tickers)}")
     print(f"  Already onboarded: {len(onboarded)}")
     print(f"  Pending          : {len(pending)}")
     print(f"  Last run         : {last_run or 'never'}")
+    print(f"  Last ticker refresh: {state.get('last_ticker_refresh') or 'never'}")
 
     # --- 1. Onboard new tickers ---
     newly_onboarded, _failed = step_onboard(pending, batch_size, onboarded)
@@ -207,6 +247,8 @@ def run(batch_size: int, skip_update: bool, run_merge: bool) -> None:
     # --- 3. Persist state ---
     state["onboarded"] = sorted(onboarded)
     state["last_run"] = str(today)
+    if refreshed:
+        state["last_ticker_refresh"] = str(today)
     save_state(state)
 
     # --- 4. Summary ---
