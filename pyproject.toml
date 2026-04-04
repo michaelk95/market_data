@@ -14,3 +14,14 @@ dependencies = [
   "pyarrow>=14.0",
   "requests>=2.31",
 ]
+
+[project.scripts]
+market-data-fetch-tickers = "market_data.fetch_tickers:main"
+market-data-run           = "market_data.orchestrator:main"
+market-data-merge         = "market_data.merge:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}

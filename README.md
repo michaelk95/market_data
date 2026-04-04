@@ -8,9 +8,32 @@ backtest engine.
 
 ---
 
+## CLI commands
+
+After `pip install -e .`, the following commands are available anywhere in your
+virtual environment:
+
+| Command | Description |
+|---------|-------------|
+| `market-data-fetch-tickers` | Download the current Russell 2000 constituent list and save to `tickers.csv` |
+| `market-data-run` | Run the daily pipeline — onboard new tickers and update existing ones |
+| `market-data-merge` | Merge all per-ticker Parquet files into a single `data/merged.parquet` |
+
+Each command accepts `--help` for full usage details.
+
+---
+
 ## Onboarding
 
 ### 1. Install dependencies
+
+Install as an editable package (recommended — registers the CLI commands):
+
+```bash
+pip install -e .
+```
+
+Or install dependencies only:
 
 ```bash
 pip install -r requirements.txt
@@ -23,7 +46,7 @@ holdings page (no API key required) and saves them to `tickers.csv`, sorted
 by market value largest-first.
 
 ```bash
-python fetch_tickers.py
+market-data-fetch-tickers
 ```
 
 Expected output:
@@ -52,11 +75,11 @@ in a single run. On each execution it:
 Progress is saved to `state.json` so runs are safe to interrupt and resume.
 
 ```bash
-python orchestrator.py                 # onboard next 50 tickers + update existing
-python orchestrator.py --batch-size 25 # onboard fewer new tickers per day
-python orchestrator.py --batch-size 0  # skip onboarding; updates only
-python orchestrator.py --no-update     # skip updates; onboard only
-python orchestrator.py --merge         # auto-run merge.py when done
+market-data-run                        # onboard next 50 tickers + update existing
+market-data-run --batch-size 25        # onboard fewer new tickers per day
+market-data-run --batch-size 0         # skip onboarding; updates only
+market-data-run --no-update            # skip updates; onboard only
+market-data-run --merge                # auto-run merge when done
 ```
 
 At 50 tickers/day the full Russell 2000 takes ~40 days to onboard.
@@ -67,7 +90,7 @@ Once you have data for the tickers you want, merge them into a single Parquet
 for the backtest engine:
 
 ```bash
-python merge.py
+market-data-merge
 ```
 
 This writes `data/merged.parquet`. Pass `--merge` to the orchestrator to do
@@ -80,8 +103,8 @@ at your Python interpreter and this project directory.
 
 Example task action:
 ```
-Program:   C:\path\to\.venv\Scripts\python.exe
-Arguments: orchestrator.py --merge
+Program:   C:\path\to\.venv\Scripts\market-data-run.exe
+Arguments: --merge
 Start in:  D:\market_data
 ```
 

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
+from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
 
 # ---------------------------------------------------------------------------
 # Paths & defaults
@@ -221,7 +221,7 @@ def run(batch_size: int, skip_update: bool, run_merge: bool) -> None:
 
     # --- 5. Optional merge ---
     if run_merge:
-        import merge  # noqa: PLC0415
+        from market_data import merge  # noqa: PLC0415
         merge.run(DATA_DIR)
 
 
