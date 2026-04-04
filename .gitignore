@@ -12,6 +12,9 @@ tickers.csv
 # Runtime state — machine-specific, regenerated each run
 state.json
 
+# Logs
+logs/
+
 # Build artifacts
 *.egg-info/
 dist/
