@@ -147,19 +147,20 @@ def fetch_option_chain(symbol: str, max_expiries: int) -> pd.DataFrame:
             if df_raw.empty:
                 continue
 
-            df = pd.DataFrame()
-            df["snapshot_date"] = today
-            df["symbol"] = symbol
-            df["expiry"] = pd.to_datetime(expiry_str).date()
-            df["strike"] = pd.to_numeric(df_raw.get("strike"), errors="coerce")
-            df["option_type"] = side
-            df["last_price"] = pd.to_numeric(df_raw.get("lastPrice"), errors="coerce")
-            df["bid"] = pd.to_numeric(df_raw.get("bid"), errors="coerce")
-            df["ask"] = pd.to_numeric(df_raw.get("ask"), errors="coerce")
-            df["volume"] = pd.to_numeric(df_raw.get("volume"), errors="coerce")
-            df["open_interest"] = pd.to_numeric(df_raw.get("openInterest"), errors="coerce")
-            df["implied_vol"] = pd.to_numeric(df_raw.get("impliedVolatility"), errors="coerce")
-            df["in_the_money"] = df_raw.get("inTheMoney", pd.Series(dtype=bool))
+            df = pd.DataFrame({
+                "snapshot_date": today,
+                "symbol": symbol,
+                "expiry": pd.to_datetime(expiry_str).date(),
+                "strike": pd.to_numeric(df_raw.get("strike"), errors="coerce"),
+                "option_type": side,
+                "last_price": pd.to_numeric(df_raw.get("lastPrice"), errors="coerce"),
+                "bid": pd.to_numeric(df_raw.get("bid"), errors="coerce"),
+                "ask": pd.to_numeric(df_raw.get("ask"), errors="coerce"),
+                "volume": pd.to_numeric(df_raw.get("volume"), errors="coerce"),
+                "open_interest": pd.to_numeric(df_raw.get("openInterest"), errors="coerce"),
+                "implied_vol": pd.to_numeric(df_raw.get("impliedVolatility"), errors="coerce"),
+                "in_the_money": df_raw.get("inTheMoney", pd.Series(dtype=bool)),
+            })
 
             frames.append(df[OPTIONS_COLS])
 
