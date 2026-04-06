@@ -23,6 +23,17 @@ Wishlist items — not needed for MVP. Revisit when the core pipeline is stable.
     trading day
   - Tag each ticker row with whether it was in the index on that date
 
+## ETF Data
+
+- **ETF holdings snapshots (Phase 2)**
+  SSGA publishes daily holdings CSVs for all SPDR ETFs; iShares does the same.
+  A `fetch_etf_holdings.py` module could snapshot each ETF's top-N holdings and
+  sector weights over time, enabling holdings-drift analysis and rebalancing
+  signals for backtests.
+  - Schema: `(as_of_date, etf_symbol, holding_symbol, weight, shares, market_value)`
+  - Storage: `data/etf_holdings/<SYMBOL>.parquet`
+  - Orchestrator step: `maybe_run_etf_holdings()` (daily cadence, like indices)
+
 ## Options & Implied Volatility
 
 - **Upgrade options source (post Phase 4)**

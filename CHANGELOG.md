@@ -6,6 +6,39 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- `etf_config.py` — central registry of sector and broad-market ETFs tracked by the
+  pipeline. Defines two groups:
+  - `SECTOR_ETFS`: the 11 SPDR Select Sector ETFs (XLF, XLK, XLE, XLV, XLI, XLP,
+    XLY, XLU, XLB, XLRE, XLC)
+  - `BROAD_ETFS`: 8 broad-market / asset-class ETFs (SPY, QQQ, IWM, IVV, DIA, GLD,
+    TLT, HYG)
+  - `ALL_ETFS`: flat symbol list combining both groups
+
+### Changed
+- `fetch_tickers.py`: ETF rows are now injected into `tickers.csv` at ticker-refresh
+  time via `_inject_etf_rows()`. Sector ETFs receive `index = "SECTOR_ETF"`;
+  broad-market ETFs receive `index = "BROAD_ETF"`. `date_added` tracking works the
+  same as for index constituents.
+- `orchestrator.py`:
+  - ETFs are now priority-onboarded at the start of each run (outside the normal
+    `--batch-size` batch limit) so they are not queued behind ~1,500 stock tickers.
+  - Fundamentals snapshots now skip ETF symbols — yfinance `.info` fields for fund
+    wrappers don't map to the equity fundamentals schema.
+  - Options cycle now includes ETF symbols (via `fetch_options.get_etf_symbols()`)
+    ahead of SP500 constituents, ensuring ETFs are covered at the start of every cycle.
+- `fetch_options.py`:
+  - New `get_etf_symbols(onboarded)` function returns onboarded ETF symbols in
+    `etf_config` order (sector first, then broad).
+  - Standalone CLI (`market-data-fetch-options`) now includes ETFs in the cycle
+    alongside SP500 tickers.
+
+### Notes
+- ETFs collect OHLCV history and options chains; fundamentals are intentionally
+  skipped (not meaningful for fund wrappers).
+- ETF holdings (top-N holdings, sector weights) are deferred to Phase 2 — see
+  `backlog.md` for details.
+
 ---
 
 ## [0.2.4.2] — 2026-04-06

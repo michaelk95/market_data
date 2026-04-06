@@ -1,7 +1,8 @@
 """
 fetch_options.py
 ----------------
-Collect daily option chain snapshots for S&P 500 tickers via yfinance.
+Collect daily option chain snapshots for S&P 500 tickers and sector/broad-market
+ETFs via yfinance.
 
 For each ticker the nearest `max_expiries` expiration dates are fetched and
 all strikes (calls + puts) are stored as a single row-per-contract snapshot.
@@ -31,10 +32,10 @@ Fields per contract
 
 Batching
 --------
-500 SP500 tickers at ~5 seconds/call is ~40 minutes.  This module supports
-batching: each run processes the next `batch_size` SP500 tickers that have
-not yet been snapshotted in the current cycle.  When all SP500 tickers have
-been covered the cycle resets automatically.
+ETFs (19) are always processed first in each cycle; the remaining ~500 SP500
+tickers follow in market-cap order.  Each run processes the next `batch_size`
+tickers not yet covered in the current cycle.  When all tickers have been
+covered the cycle resets automatically.
 
 Cycle state is tracked in state.json under the key "options_cycle".
 
@@ -110,6 +111,15 @@ def get_sp500_symbols(onboarded: set[str]) -> list[str]:
     symbols = sp500["symbol"].dropna().astype(str).tolist()
     # Restrict to onboarded (we need OHLCV data before options is useful)
     return [s for s in symbols if s in onboarded]
+
+
+def get_etf_symbols(onboarded: set[str]) -> list[str]:
+    """
+    Return sector and broad-market ETF symbols that are in the onboarded set,
+    in the order defined in etf_config (sector ETFs first, then broad ETFs).
+    """
+    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    return [s for s in ALL_ETFS if s in onboarded]
 
 
 # ---------------------------------------------------------------------------
@@ -320,27 +330,32 @@ def main() -> None:
         return
 
     sp500 = get_sp500_symbols(onboarded)
-    if not sp500:
-        print("No SP500 tickers found in onboarded set.")
+    etfs = get_etf_symbols(onboarded)
+    # ETFs first so they're always covered at the start of each cycle.
+    etf_set = set(etfs)
+    all_symbols = etfs + [s for s in sp500 if s not in etf_set]
+
+    if not all_symbols:
+        print("No eligible tickers found in onboarded set.")
         return
 
     # --- Determine batch from cycle state ---
     cycle_done: list[str] = state.get("options_cycle", [])
     cycle_done_set = set(cycle_done)
 
-    pending = [s for s in sp500 if s not in cycle_done_set]
+    pending = [s for s in all_symbols if s not in cycle_done_set]
 
     if not pending:
         # Full cycle complete — reset and start over
-        print(f"Options cycle complete ({len(sp500)} tickers covered). Resetting cycle.")
+        print(f"Options cycle complete ({len(all_symbols)} tickers covered). Resetting cycle.")
         cycle_done = []
         cycle_done_set = set()
-        pending = list(sp500)
+        pending = list(all_symbols)
 
     batch = pending[:args.batch_size]
     remaining_after = len(pending) - len(batch)
 
-    print(f"\nOptions cycle progress: {len(cycle_done_set)}/{len(sp500)} done  "
+    print(f"\nOptions cycle progress: {len(cycle_done_set)}/{len(all_symbols)} done  "
           f"|  {len(pending)} pending  |  processing {len(batch)} this run")
 
     run(symbols=batch, max_expiries=args.max_expiries)
@@ -350,7 +365,7 @@ def main() -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2, default=str))
 
     if remaining_after == 0:
-        print(f"Options cycle complete — all {len(sp500)} SP500 tickers covered.")
+        print(f"Options cycle complete — all {len(all_symbols)} tickers covered.")
     else:
         days_remaining = (remaining_after + args.batch_size - 1) // args.batch_size
         print(f"~{days_remaining} more run(s) to complete this cycle.")
