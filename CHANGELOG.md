@@ -8,6 +8,18 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.2.4.1] — 2026-04-06
+
+### Fixed
+- OHLCV parquet files were being written to `data/` root instead of `data/ohlcv/` on
+  every pipeline run. Root cause: `DATA_DIR = Path("data")` in `orchestrator.py` and
+  `DEFAULT_DATA_DIR = Path("data")` in `merge.py` both pointed at the wrong directory.
+  - `orchestrator.py`: `DATA_DIR` changed to `Path("data/ohlcv")`
+  - `merge.py`: `DEFAULT_DATA_DIR` changed to `Path("data/ohlcv")`; `DEFAULT_OUT`
+    decoupled to remain `Path("data/merged.parquet")` so the merged file is unaffected
+
+---
+
 ## [0.2.4] — 2026-04-05
 
 ### Added
