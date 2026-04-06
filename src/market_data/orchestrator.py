@@ -3,23 +3,41 @@ orchestrator.py
 ---------------
 Daily runner for the market_data pipeline.
 
-Each run does two things, in order:
+Each run executes in order:
 
-  1. ONBOARD  — pick the next `--batch-size` tickers from tickers.csv that
-                haven't been fetched yet, and pull their full 10-year history.
+  1. ONBOARD       — pick the next `--batch-size` tickers from tickers.csv that
+                     haven't been fetched yet, and pull their full 10-year history.
 
-  2. UPDATE   — for every already-onboarded ticker, pull any new trading days
-                since the last run and append them to their Parquet file.
+  2. UPDATE        — for every already-onboarded ticker, pull any new trading days
+                     since the last run and append them to their Parquet file.
+
+  3. FUNDAMENTALS  — (optional, monthly) snapshot market cap, analyst estimates,
+                     and valuation ratios for all onboarded tickers via yfinance.
+                     Auto-skipped if last run was <30 days ago.
+
+  4. OPTIONS       — (optional, daily) fetch option chain snapshots (IV, bid/ask,
+                     open interest) for the next batch of SP500 tickers. Processes
+                     50 tickers/run across a ~10-day rolling cycle; cycle state is
+                     tracked in state.json under "options_cycle".
+
+  5. INDICES       — (optional, daily) update VIX, Treasury yields, Fed Funds
+                     futures, and S&P 500 index level.
+
+  6. MACRO         — (optional, daily) update FRED macro series (CPI, GDP,
+                     Fed Funds rate, Treasury spread, unemployment, etc.).
+
+  7. MERGE         — (optional) rebuild data/merged.parquet from all per-ticker
+                     OHLCV files.
 
 Progress is persisted in state.json so runs are safe to interrupt and resume.
 
 Usage
 -----
-    python orchestrator.py                        # default batch size (50)
-    python orchestrator.py --batch-size 25        # onboard fewer per day
-    python orchestrator.py --batch-size 0         # updates only, no new tickers
-    python orchestrator.py --no-update            # onboard only, skip updates
-    python orchestrator.py --merge                # run merge.py when done
+    market-data-run                                          # OHLCV only
+    market-data-run --batch-size 25                         # onboard fewer per day
+    market-data-run --batch-size 0                          # updates only, no new tickers
+    market-data-run --no-update                             # onboard only, skip updates
+    market-data-run --indices --macro --fundamentals --options --merge # full daily run (recommended)
 """
 
 from __future__ import annotations
@@ -45,6 +63,9 @@ DATA_DIR = Path("data")
 DEFAULT_BATCH_SIZE = 50
 SLEEP_BETWEEN_CALLS = 5  # seconds; be polite to the yfinance endpoint
 TICKER_REFRESH_DAYS = 90
+FUNDAMENTALS_REFRESH_DAYS = 30
+DEFAULT_OPTIONS_BATCH_SIZE = 50
+DEFAULT_MAX_EXPIRIES = 4
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +79,16 @@ def load_state() -> dict:
             "onboarded": raw.get("onboarded", []),
             "last_run": raw.get("last_run"),
             "last_ticker_refresh": raw.get("last_ticker_refresh"),
+            "last_fundamentals_run": raw.get("last_fundamentals_run"),
+            "options_cycle": raw.get("options_cycle", []),
         }
-    return {"onboarded": [], "last_run": None, "last_ticker_refresh": None}
+    return {
+        "onboarded": [],
+        "last_run": None,
+        "last_ticker_refresh": None,
+        "last_fundamentals_run": None,
+        "options_cycle": [],
+    }
 
 
 def save_state(state: dict) -> None:
@@ -98,6 +127,88 @@ def maybe_refresh_tickers(
     except Exception as exc:
         print(f"  WARNING: Ticker refresh failed: {exc}. Continuing with existing list.")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Fundamentals refresh
+# ---------------------------------------------------------------------------
+
+def maybe_run_fundamentals(
+    state: dict,
+    onboarded: set[str],
+    today: date,
+) -> bool:
+    """
+    Run a fundamentals snapshot if last_fundamentals_run is absent or >30 days ago.
+    Returns True if fundamentals were fetched this run.
+
+    Failures are non-fatal and logged as warnings.
+    """
+    last_raw = state.get("last_fundamentals_run")
+    if last_raw:
+        days_since = (today - date.fromisoformat(last_raw)).days
+        if days_since < FUNDAMENTALS_REFRESH_DAYS:
+            print(f"  Fundamentals are fresh ({days_since}d old, threshold {FUNDAMENTALS_REFRESH_DAYS}d)")
+            return False
+
+    symbols = sorted(onboarded)
+    print(f"\nFetching fundamentals for {len(symbols)} tickers "
+          f"(last run: {last_raw or 'never'})...")
+    try:
+        from market_data import fetch_fundamentals  # noqa: PLC0415
+        fetch_fundamentals.run(symbols=symbols)
+        return True
+    except Exception as exc:
+        print(f"  WARNING: Fundamentals fetch failed: {exc}.")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Options batch step
+# ---------------------------------------------------------------------------
+
+def step_options(
+    state: dict,
+    onboarded: set[str],
+    batch_size: int,
+    max_expiries: int,
+) -> set[str]:
+    """
+    Process the next `batch_size` SP500 tickers in the options cycle.
+
+    Returns the updated set of tickers covered in the current cycle so the
+    caller can persist it to state.json.
+    """
+    from market_data import fetch_options  # noqa: PLC0415
+
+    sp500 = fetch_options.get_sp500_symbols(onboarded)
+    if not sp500:
+        print("  OPTIONS  no SP500 tickers in onboarded set — skipping.")
+        return set(state.get("options_cycle", []))
+
+    cycle_done: set[str] = set(state.get("options_cycle", []))
+    pending = [s for s in sp500 if s not in cycle_done]
+
+    if not pending:
+        print(f"  OPTIONS  cycle complete ({len(sp500)} tickers). Resetting cycle.")
+        cycle_done = set()
+        pending = list(sp500)
+
+    batch = pending[:batch_size]
+    remaining_after = len(pending) - len(batch)
+
+    print(f"\n{'='*60}")
+    print(f"OPTIONS  {len(batch)} tickers  "
+          f"(cycle: {len(cycle_done)}/{len(sp500)} done, {remaining_after} remaining after this batch)")
+    print(f"{'='*60}")
+
+    fetch_options.run(symbols=batch, max_expiries=max_expiries)
+
+    updated_cycle = cycle_done | set(batch)
+    if remaining_after == 0:
+        print(f"  Options cycle complete — all {len(sp500)} SP500 tickers covered.")
+        return set()  # reset for next cycle
+    return updated_cycle
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +320,7 @@ def step_update(
 # Main
 # ---------------------------------------------------------------------------
 
-def run(batch_size: int, skip_update: bool, run_merge: bool) -> None:
+def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool = False, run_macro: bool = False, run_fundamentals: bool = False, run_options: bool = False, options_batch_size: int = 50) -> None:
     today = date.today()
 
     state = load_state()
@@ -244,14 +355,40 @@ def run(batch_size: int, skip_update: bool, run_merge: bool) -> None:
     elif not skip_update and not last_run:
         print("\nUPDATE   skipped — no previous run date in state.json")
 
-    # --- 3. Persist state ---
+    # --- 3. Optional fundamentals snapshot (auto-throttled to monthly) ---
+    fundamentals_ran = False
+    if run_fundamentals:
+        fundamentals_ran = maybe_run_fundamentals(state, onboarded, today)
+
+    # --- 4. Optional options chain batch ---
+    updated_options_cycle: set[str] | None = None
+    if run_options:
+        updated_options_cycle = step_options(
+            state, onboarded, batch_size=options_batch_size, max_expiries=DEFAULT_MAX_EXPIRIES
+        )
+
+    # --- 5. Optional indices update ---
+    if run_indices:
+        from market_data import fetch_indices  # noqa: PLC0415
+        fetch_indices.run()
+
+    # --- 6. Optional macro update ---
+    if run_macro:
+        from market_data import fetch_macro  # noqa: PLC0415
+        fetch_macro.run()
+
+    # --- 7. Persist state ---
     state["onboarded"] = sorted(onboarded)
     state["last_run"] = str(today)
     if refreshed:
         state["last_ticker_refresh"] = str(today)
+    if fundamentals_ran:
+        state["last_fundamentals_run"] = str(today)
+    if updated_options_cycle is not None:
+        state["options_cycle"] = sorted(updated_options_cycle)
     save_state(state)
 
-    # --- 4. Summary ---
+    # --- 7. Summary ---
     remaining = len([t for t in all_tickers if t not in onboarded])
     print(f"\n{'='*60}")
     print(f"Done.  Onboarded: {len(onboarded)}/{len(all_tickers)}  |  "
@@ -261,7 +398,7 @@ def run(batch_size: int, skip_update: bool, run_merge: bool) -> None:
         print(f"At {batch_size} tickers/day  →  ~{eta} more day(s) to full coverage")
     print(f"{'='*60}\n")
 
-    # --- 5. Optional merge ---
+    # --- 8. Optional merge ---
     if run_merge:
         from market_data import merge  # noqa: PLC0415
         merge.run(DATA_DIR)
@@ -288,12 +425,50 @@ def main() -> None:
         action="store_true",
         help="Run merge.py after the pipeline completes.",
     )
+    parser.add_argument(
+        "--indices",
+        action="store_true",
+        help="Also update index/rate symbols (VIX, Treasury yields, Fed Funds futures).",
+    )
+    parser.add_argument(
+        "--macro",
+        action="store_true",
+        help="Also update FRED macro series (CPI, GDP, Fed Funds rate, etc.).",
+    )
+    parser.add_argument(
+        "--fundamentals",
+        action="store_true",
+        help=(
+            "Also snapshot per-ticker fundamentals (market cap, analyst estimates, etc.). "
+            f"Auto-skipped if last run was <{FUNDAMENTALS_REFRESH_DAYS} days ago."
+        ),
+    )
+    parser.add_argument(
+        "--options",
+        action="store_true",
+        help=(
+            "Also run the options chain batch (IV, bid/ask, OI) for SP500 tickers. "
+            f"Processes the next --options-batch-size tickers in the cycle (default: {DEFAULT_OPTIONS_BATCH_SIZE})."
+        ),
+    )
+    parser.add_argument(
+        "--options-batch-size",
+        type=int,
+        default=DEFAULT_OPTIONS_BATCH_SIZE,
+        metavar="N",
+        help=f"SP500 tickers to process per options run (default: {DEFAULT_OPTIONS_BATCH_SIZE}).",
+    )
     args = parser.parse_args()
 
     run(
         batch_size=args.batch_size,
         skip_update=args.no_update,
         run_merge=args.merge,
+        run_indices=args.indices,
+        run_macro=args.macro,
+        run_fundamentals=args.fundamentals,
+        run_options=args.options,
+        options_batch_size=args.options_batch_size,
     )
 
 

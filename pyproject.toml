@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market_data"
-version = "0.1.0"
-description = "Daily OHLCV data collector for the paper_trading backtest engine."
+version = "0.2.4"
+description = "Market data collector for the paper_trading backtest engine."
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
@@ -13,12 +13,18 @@ dependencies = [
   "pandas>=2.0",
   "pyarrow>=14.0",
   "requests>=2.31",
+  "fredapi>=0.5",
+  "python-dotenv>=1.0",
 ]
 
 [project.scripts]
-market-data-fetch-tickers = "market_data.fetch_tickers:main"
-market-data-run           = "market_data.orchestrator:main"
-market-data-merge         = "market_data.merge:main"
+market-data-fetch-tickers  = "market_data.fetch_tickers:main"
+market-data-run            = "market_data.orchestrator:main"
+market-data-merge          = "market_data.merge:main"
+market-data-fetch-indices       = "market_data.fetch_indices:main"
+market-data-fetch-macro         = "market_data.fetch_macro:main"
+market-data-fetch-fundamentals  = "market_data.fetch_fundamentals:main"
+market-data-fetch-options       = "market_data.fetch_options:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
