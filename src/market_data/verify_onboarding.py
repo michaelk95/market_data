@@ -1,15 +1,15 @@
 """
-verify.py
----------
+verify_onboarding.py
+--------------------
 Checks that every ticker listed as onboarded in state.json actually has a
 corresponding data file on disk.  Any ticker that is "onboarded" in state but
-missing its parquet file is a ghost entry — it will never be re-fetched by the
+missing its parquet file is a ghost entry -- it will never be re-fetched by the
 pipeline because the pipeline skips already-onboarded tickers.
 
 Usage:
-    python -m market_data.verify            # report only
-    python -m market_data.verify --fix      # remove ghosts from state.json
-    python -m market_data.verify --state path/to/state.json --data path/to/ohlcv
+    python -m market_data.verify_onboarding            # report only
+    python -m market_data.verify_onboarding --fix      # remove ghosts from state.json
+    python -m market_data.verify_onboarding --state path/to/state.json --data path/to/ohlcv
 """
 
 import argparse

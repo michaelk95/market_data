@@ -8,6 +8,27 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.2.4.2] — 2026-04-06
+
+### Added
+- `verify_onboarding.py` — checks that every ticker marked as onboarded in `state.json`
+  has a corresponding parquet file in `data/ohlcv/`. Ghost entries (onboarded in state
+  but missing their file) are silently skipped by the pipeline and never re-fetched.
+  - Reports ghosts and orphans (files on disk not tracked in state)
+  - `--fix` flag removes ghost entries from `state.json` so the pipeline re-onboards them
+  - CLI: `python -m market_data.verify_onboarding [--fix] [--state ...] [--data ...]`
+
+### Fixed
+- `fetch_tickers.py`: iShares ETF holdings use compact symbols for dual-class shares
+  (e.g. `BRKB`, `BFB`) that strip the dot, but yfinance requires hyphens (`BRK-B`, `BF-B`).
+  Added `TICKER_CORRECTIONS` map applied at fetch time. Affected tickers: `BRK-B`, `BF-B`,
+  `GEF-B`, `CRD-A`, `MOG-A`.
+- `fetch_tickers.py`: CVRs, warrants, rights, and escrow shares from iShares holdings are
+  not tradeable equities and have no yfinance price data, causing persistent onboarding
+  failures. Added `_SKIP_NAME_RE` name-based filter to exclude them at fetch time.
+
+---
+
 ## [0.2.4.1] — 2026-04-06
 
 ### Fixed
