@@ -23,6 +23,16 @@ Wishlist items — not needed for MVP. Revisit when the core pipeline is stable.
     trading day
   - Tag each ticker row with whether it was in the index on that date
 
+## Options & Implied Volatility
+
+- **Upgrade options source (post Phase 4)**
+  The current `fetch_options.py` uses yfinance (unofficial scraper). If data
+  quality becomes an issue, consider upgrading to:
+  - Alpaca paid tier — provides real option chains with accurate IV and Greeks
+  - CBOE DataShop — official source for historical options data
+  Greek values (delta, gamma, theta, vega) are not available from yfinance
+  and would require a paid source.
+
 ## Scheduling & Orchestration
 
 - **Automated scheduler**
