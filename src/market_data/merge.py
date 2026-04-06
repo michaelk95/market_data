@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_DATA_DIR = Path("data")
-DEFAULT_OUT = DEFAULT_DATA_DIR / "merged.parquet"
+DEFAULT_DATA_DIR = Path("data/ohlcv")
+DEFAULT_OUT = Path("data") / "merged.parquet"
 
 
 def run(data_dir: Path = DEFAULT_DATA_DIR, out: Path = DEFAULT_OUT) -> None:

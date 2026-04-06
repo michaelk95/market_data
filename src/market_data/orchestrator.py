@@ -58,7 +58,7 @@ from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_increm
 
 STATE_FILE = Path("state.json")
 TICKERS_FILE = Path("tickers.csv")
-DATA_DIR = Path("data")
+DATA_DIR = Path("data/ohlcv")
 
 DEFAULT_BATCH_SIZE = 50
 SLEEP_BETWEEN_CALLS = 5  # seconds; be polite to the yfinance endpoint
