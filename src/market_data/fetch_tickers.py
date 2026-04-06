@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import io
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -33,6 +34,20 @@ IVV_CSV_URL = (
     "ishares-core-sp-500-etf/1467271812596.ajax"
     "?fileType=csv&fileName=IVV_holdings&dataType=fund"
 )
+
+# iShares strips dots from dual-class ticker symbols (e.g. BRK.B → BRKB),
+# but yfinance requires hyphens (BRK-B). Map known cases explicitly.
+TICKER_CORRECTIONS: dict[str, str] = {
+    "BRKB": "BRK-B",
+    "BFB":  "BF-B",
+    "GEFB": "GEF-B",
+    "CRDA": "CRD-A",
+    "MOGA": "MOG-A",
+}
+
+# Exclude non-tradeable instruments that appear as ETF line items but have
+# no meaningful price history on yfinance.
+_SKIP_NAME_RE = re.compile(r"\b(CVR|RIGHTS?|ESCROW|WARRANT)\b", re.IGNORECASE)
 
 HEADERS = {
     "User-Agent": (
@@ -84,6 +99,15 @@ def clean_holdings(df: pd.DataFrame, index_label: str) -> pd.DataFrame:
     df = df[df["Ticker"].notna()]
     df = df[~df["Ticker"].isin(["-", "", "CASH"])]
     df = df[df["Asset Class"] == "Equity"] if "Asset Class" in df.columns else df
+
+    # Exclude CVRs, warrants, rights, and escrow shares — these are not
+    # tradeable equities and yfinance has no price data for them.
+    if "Name" in df.columns:
+        df = df[~df["Name"].str.contains(_SKIP_NAME_RE, na=False)]
+
+    # Normalize dual-class symbols from iShares compact format to yfinance format.
+    df = df.copy()
+    df["Ticker"] = df["Ticker"].replace(TICKER_CORRECTIONS)
 
     # Parse market value — comes in as "$1,234,567.89" strings
     if "Market Value" in df.columns:
