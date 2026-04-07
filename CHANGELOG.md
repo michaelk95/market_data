@@ -41,6 +41,19 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.2.4.3] — 2026-04-06
+
+### Fixed
+- `fetch_options.py`: `snapshot_date`, `symbol`, and `expiry` columns were all-null in
+  fetched option chain data. Root cause: constructing a `pd.DataFrame()` empty first, then
+  assigning scalar values column-by-column before any indexed Series column existed.
+  Pandas stored the scalars as zero-row columns; subsequent Series assignments (e.g.
+  `strike`) aligned by index, leaving the scalar columns as NaN. Fixed by replacing the
+  incremental assignments with a single `pd.DataFrame({...})` dict constructor, which
+  correctly broadcasts scalars to the length of the Series values.
+
+---
+
 ## [0.2.4.2] — 2026-04-06
 
 ### Added
