@@ -227,6 +227,37 @@ def apply_date_added(
     return result
 
 
+def _inject_etf_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Append rows for sector and broad-market ETFs that are not already present
+    in `df` (the merged constituent DataFrame).
+
+    ETF rows use index = "SECTOR_ETF" or "BROAD_ETF" and NaN market_value
+    (AUM is not comparable to equity market cap and not needed for pipeline
+    operation).  NaN values sort to the bottom of tickers.csv, keeping the
+    constituent stocks at the top.
+    """
+    from market_data.etf_config import SECTOR_ETFS, BROAD_ETFS  # noqa: PLC0415
+
+    existing_symbols: set[str] = set(df["symbol"].dropna())
+
+    new_rows = []
+    for symbol, name in SECTOR_ETFS:
+        if symbol not in existing_symbols:
+            new_rows.append({"symbol": symbol, "name": name,
+                              "market_value": float("nan"), "index": "SECTOR_ETF"})
+    for symbol, name in BROAD_ETFS:
+        if symbol not in existing_symbols:
+            new_rows.append({"symbol": symbol, "name": name,
+                              "market_value": float("nan"), "index": "BROAD_ETF"})
+
+    if not new_rows:
+        return df
+
+    etf_df = pd.DataFrame(new_rows, columns=["symbol", "name", "market_value", "index"])
+    return pd.concat([df, etf_df], ignore_index=True)
+
+
 def run(out_path: Path, today: str | None = None) -> pd.DataFrame:
     """
     Fetch IWM + IVV holdings, merge, apply date_added logic, and write tickers.csv.
@@ -242,6 +273,7 @@ def run(out_path: Path, today: str | None = None) -> pd.DataFrame:
     ivv = clean_holdings(raw_ivv, "SP500")
 
     merged = merge_holdings(iwm, ivv)
+    merged = _inject_etf_rows(merged)
     result = apply_date_added(merged, out_path, today)
 
     if result.empty:

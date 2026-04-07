@@ -16,9 +16,9 @@ Each run executes in order:
                      Auto-skipped if last run was <30 days ago.
 
   4. OPTIONS       — (optional, daily) fetch option chain snapshots (IV, bid/ask,
-                     open interest) for the next batch of SP500 tickers. Processes
-                     50 tickers/run across a ~10-day rolling cycle; cycle state is
-                     tracked in state.json under "options_cycle".
+                     open interest) for the next batch of SP500 + sector/broad ETF
+                     tickers. Processes 50 tickers/run across a rolling cycle; cycle
+                     state is tracked in state.json under "options_cycle".
 
   5. INDICES       — (optional, daily) update VIX, Treasury yields, Fed Funds
                      futures, and S&P 500 index level.
@@ -151,7 +151,10 @@ def maybe_run_fundamentals(
             print(f"  Fundamentals are fresh ({days_since}d old, threshold {FUNDAMENTALS_REFRESH_DAYS}d)")
             return False
 
-    symbols = sorted(onboarded)
+    # ETFs are fund wrappers — their yfinance .info fields don't map to the
+    # equity fundamentals schema (no P/E, margins, analyst targets, etc.).
+    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    symbols = sorted(s for s in onboarded if s not in ALL_ETFS)
     print(f"\nFetching fundamentals for {len(symbols)} tickers "
           f"(last run: {last_raw or 'never'})...")
     try:
@@ -174,7 +177,7 @@ def step_options(
     max_expiries: int,
 ) -> set[str]:
     """
-    Process the next `batch_size` SP500 tickers in the options cycle.
+    Process the next `batch_size` SP500 + ETF tickers in the options cycle.
 
     Returns the updated set of tickers covered in the current cycle so the
     caller can persist it to state.json.
@@ -182,31 +185,37 @@ def step_options(
     from market_data import fetch_options  # noqa: PLC0415
 
     sp500 = fetch_options.get_sp500_symbols(onboarded)
-    if not sp500:
-        print("  OPTIONS  no SP500 tickers in onboarded set — skipping.")
+    etfs = fetch_options.get_etf_symbols(onboarded)
+    # ETFs first so they're always covered at the start of each cycle, then
+    # SP500 constituents (preserving largest-cap-first ordering from tickers.csv).
+    etf_set = set(etfs)
+    all_symbols = etfs + [s for s in sp500 if s not in etf_set]
+
+    if not all_symbols:
+        print("  OPTIONS  no eligible tickers in onboarded set — skipping.")
         return set(state.get("options_cycle", []))
 
     cycle_done: set[str] = set(state.get("options_cycle", []))
-    pending = [s for s in sp500 if s not in cycle_done]
+    pending = [s for s in all_symbols if s not in cycle_done]
 
     if not pending:
-        print(f"  OPTIONS  cycle complete ({len(sp500)} tickers). Resetting cycle.")
+        print(f"  OPTIONS  cycle complete ({len(all_symbols)} tickers). Resetting cycle.")
         cycle_done = set()
-        pending = list(sp500)
+        pending = list(all_symbols)
 
     batch = pending[:batch_size]
     remaining_after = len(pending) - len(batch)
 
     print(f"\n{'='*60}")
     print(f"OPTIONS  {len(batch)} tickers  "
-          f"(cycle: {len(cycle_done)}/{len(sp500)} done, {remaining_after} remaining after this batch)")
+          f"(cycle: {len(cycle_done)}/{len(all_symbols)} done, {remaining_after} remaining after this batch)")
     print(f"{'='*60}")
 
     fetch_options.run(symbols=batch, max_expiries=max_expiries)
 
     updated_cycle = cycle_done | set(batch)
     if remaining_after == 0:
-        print(f"  Options cycle complete — all {len(sp500)} SP500 tickers covered.")
+        print(f"  Options cycle complete — all {len(all_symbols)} tickers covered.")
         return set()  # reset for next cycle
     return updated_cycle
 
@@ -342,15 +351,32 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     print(f"  Last run         : {last_run or 'never'}")
     print(f"  Last ticker refresh: {state.get('last_ticker_refresh') or 'never'}")
 
-    # --- 1. Onboard new tickers ---
-    newly_onboarded, _failed = step_onboard(pending, batch_size, onboarded)
+    # --- 1a. Priority-onboard ETFs (outside the normal batch limit) ---
+    # ETFs sit at the bottom of tickers.csv (NaN market_value sorts last) so
+    # without this pre-pass they would wait until all ~1,500 stock tickers are
+    # onboarded.  There are at most 19 ETFs, so this adds <2 minutes once.
+    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    etf_pending = [t for t in ALL_ETFS if t not in onboarded and t in set(all_tickers)]
+    etf_newly_onboarded: set[str] = set()
+    if etf_pending:
+        print(f"\n  ETFs pending onboarding: {etf_pending}")
+        etf_newly_onboarded, _ = step_onboard(
+            etf_pending, batch_size=len(etf_pending), onboarded=onboarded
+        )
+        onboarded |= etf_newly_onboarded
+
+    # --- 1b. Onboard new stock tickers (batch-limited, ETFs excluded) ---
+    non_etf_pending = [t for t in pending if t not in set(ALL_ETFS)]
+    newly_onboarded, _failed = step_onboard(non_etf_pending, batch_size, onboarded)
     onboarded |= newly_onboarded
+
+    all_newly_onboarded = etf_newly_onboarded | newly_onboarded
 
     # --- 2. Incremental updates ---
     if not skip_update and last_run:
         # Update tickers that were already onboarded before this run
         # (newly onboarded ones just got full history; no need to update them)
-        to_update = [t for t in all_tickers if t in onboarded and t not in newly_onboarded]
+        to_update = [t for t in all_tickers if t in onboarded and t not in all_newly_onboarded]
         step_update(to_update, since=last_run)
     elif not skip_update and not last_run:
         print("\nUPDATE   skipped — no previous run date in state.json")
@@ -447,7 +473,7 @@ def main() -> None:
         "--options",
         action="store_true",
         help=(
-            "Also run the options chain batch (IV, bid/ask, OI) for SP500 tickers. "
+            "Also run the options chain batch (IV, bid/ask, OI) for SP500 + ETF tickers. "
             f"Processes the next --options-batch-size tickers in the cycle (default: {DEFAULT_OPTIONS_BATCH_SIZE})."
         ),
     )
@@ -456,7 +482,7 @@ def main() -> None:
         type=int,
         default=DEFAULT_OPTIONS_BATCH_SIZE,
         metavar="N",
-        help=f"SP500 tickers to process per options run (default: {DEFAULT_OPTIONS_BATCH_SIZE}).",
+        help=f"Tickers to process per options run (default: {DEFAULT_OPTIONS_BATCH_SIZE}).",
     )
     args = parser.parse_args()
 
