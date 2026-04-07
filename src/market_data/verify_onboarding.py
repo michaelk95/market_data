@@ -100,7 +100,7 @@ def main() -> None:
             print(f"\nFixed: removed {removed} ghost(s) from {state_file}.")
             print("Run the pipeline to re-onboard them.")
     elif ghosts:
-        print(f"\nRun with --fix to remove ghost(s) from state.json.")
+        print("\nRun with --fix to remove ghost(s) from state.json.")
 
 
 if __name__ == "__main__":
