@@ -6,10 +6,8 @@ behaviour without touching any real data directories.
 """
 
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from market_data import merge
 

@@ -6,8 +6,6 @@ Tests for fetch_tickers.py:
   - _inject_etf_rows()   — idempotency and ETF label correctness
 """
 
-from datetime import date
-from pathlib import Path
 
 import pandas as pd
 import pytest
