@@ -66,7 +66,7 @@ BROAD_ETFS: list[tuple[str, str]] = [
     ("SHY",  "iShares 1-3 Year Treasury Bond ETF"),
     ("IEF",  "iShares 7-10 Year Treasury Bond ETF"),
     ("TLT",  "iShares 20+ Year Treasury Bond ETF"),
-    ("TIPS", "iShares TIPS Bond ETF"),
+    ("TIP",  "iShares TIPS Bond ETF"),
     ("EMB",  "iShares JP Morgan USD Emerging Markets Bond ETF"),
     ("MUB",  "iShares National Muni Bond ETF"),
     # --- Commodities ---
