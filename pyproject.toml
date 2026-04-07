@@ -26,8 +26,21 @@ market-data-fetch-macro         = "market_data.fetch_macro:main"
 market-data-fetch-fundamentals  = "market_data.fetch_fundamentals:main"
 market-data-fetch-options       = "market_data.fetch_options:main"
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-mock>=3.14",
+  "pytest-cov>=5.0",
+  "responses>=0.25",
+  "ruff>=0.4",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --cov=src/market_data --cov-report=term-missing"
