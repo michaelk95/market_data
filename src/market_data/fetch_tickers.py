@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import io
+import logging
 import re
 import sys
 from datetime import date
@@ -21,6 +22,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+
+logger = logging.getLogger(__name__)
 
 # iShares ETF holdings CSV endpoints (no auth required)
 IWM_CSV_URL = (
@@ -60,7 +63,7 @@ HEADERS = {
 
 def fetch_etf_holdings(url: str) -> pd.DataFrame:
     """Download an iShares ETF holdings CSV and return the raw DataFrame."""
-    print(f"Downloading ETF holdings from {url[:60]}...")
+    logger.info("Downloading ETF holdings from %s...", url[:60])
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
 
@@ -286,6 +289,9 @@ def run(out_path: Path, today: str | None = None) -> pd.DataFrame:
 
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Fetch Russell 2000 (IWM) + S&P 500 (IVV) tickers from iShares."
     )
@@ -301,15 +307,14 @@ def main() -> None:
     try:
         tickers = run(out_path)
     except requests.RequestException as exc:
-        print(f"ERROR: Failed to download ETF holdings: {exc}", file=sys.stderr)
+        logger.error("Failed to download ETF holdings: %s", exc, exc_info=True)
         sys.exit(1)
 
     counts = tickers["index"].value_counts()
-    print(f"\nSaved {len(tickers)} tickers to {out_path}")
+    logger.info("Saved %d tickers to %s", len(tickers), out_path)
     for label, count in counts.items():
-        print(f"  {label}: {count}")
-    print()
-    print(tickers.head(10).to_string(index=False))
+        logger.info("  %s: %d", label, count)
+    logger.info("\n%s", tickers.head(10).to_string(index=False))
 
 
 if __name__ == "__main__":

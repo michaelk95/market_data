@@ -38,12 +38,15 @@ Usage
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -168,40 +171,40 @@ def run(
     today = date.today()
     total = len(symbols)
 
-    print(f"\nmarket_data fundamentals  —  {today}")
-    print(f"  Tickers: {total}")
-    print(f"{'='*55}")
+    logger.info("market_data fundamentals  —  %s", today)
+    logger.info("Tickers: %d", total)
 
     saved = 0
     skipped = 0
     failed = 0
 
     for i, symbol in enumerate(symbols, 1):
-        prefix = f"  [{i:>4}/{total}] {symbol:<8}"
+        prefix = f"[{i:>4}/{total}] {symbol:<8}"
         try:
             record = fetch_fundamentals(symbol)
             if record is None:
-                print(f"{prefix}  no data")
+                logger.info("%s  no data", prefix)
                 skipped += 1
             else:
                 added = save_fundamentals(symbol, record, fund_dir)
                 if added:
                     mktcap = record.get("market_cap")
                     cap_str = f"  mktcap={mktcap:,.0f}" if mktcap else ""
-                    print(f"{prefix}  saved{cap_str}")
+                    logger.info("%s  saved%s", prefix, cap_str)
                     saved += 1
                 else:
-                    print(f"{prefix}  already up to date")
+                    logger.info("%s  already up to date", prefix)
                     skipped += 1
         except Exception as exc:
-            print(f"{prefix}  ERROR: {exc}")
+            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             failed += 1
 
         if i < total:
             time.sleep(SLEEP_BETWEEN_CALLS)
 
-    print(f"{'='*55}")
-    print(f"Done.  Saved: {saved}  |  Skipped: {skipped}  |  Failed: {failed}\n")
+    logger.info(
+        "fundamentals done: saved=%d  skipped=%d  failed=%d", saved, skipped, failed
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +212,9 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description=(
             "Fetch fundamental snapshots (market cap, analyst estimates, etc.) "
@@ -233,12 +239,12 @@ def main() -> None:
         import json  # noqa: PLC0415
         state_file = Path("state.json")
         if not state_file.exists():
-            print("No state.json found and no --symbols provided. Nothing to do.")
+            logger.warning("No state.json found and no --symbols provided. Nothing to do.")
             return
         state = json.loads(state_file.read_text())
         symbols = sorted(state.get("onboarded", []))
         if not symbols:
-            print("No onboarded tickers in state.json. Run market-data-run first.")
+            logger.warning("No onboarded tickers in state.json. Run market-data-run first.")
             return
 
     run(symbols=symbols)

@@ -14,9 +14,12 @@ Usage
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = Path("data/ohlcv")
 DEFAULT_OUT = Path("data") / "merged.parquet"
@@ -29,10 +32,10 @@ def run(data_dir: Path = DEFAULT_DATA_DIR, out: Path = DEFAULT_OUT) -> None:
     )
 
     if not ticker_files:
-        print(f"No per-ticker Parquet files found in {data_dir}/")
+        logger.warning("No per-ticker Parquet files found in %s/", data_dir)
         return
 
-    print(f"Merging {len(ticker_files)} ticker file(s)...")
+    logger.info("Merging %d ticker file(s)...", len(ticker_files))
 
     frames = []
     for path in ticker_files:
@@ -40,10 +43,10 @@ def run(data_dir: Path = DEFAULT_DATA_DIR, out: Path = DEFAULT_OUT) -> None:
             df = pd.read_parquet(path)
             frames.append(df)
         except Exception as exc:
-            print(f"  WARNING: skipping {path.name}: {exc}")
+            logger.warning("skipping %s: %s", path.name, exc, exc_info=True)
 
     if not frames:
-        print("Nothing to merge.")
+        logger.warning("Nothing to merge.")
         return
 
     merged = (
@@ -63,10 +66,19 @@ def run(data_dir: Path = DEFAULT_DATA_DIR, out: Path = DEFAULT_OUT) -> None:
     symbols = merged["symbol"].nunique()
     dates = merged["date"].nunique()
     rows = len(merged)
-    print(f"Wrote {out}  —  {rows:,} rows  |  {symbols:,} symbols  |  {dates:,} trading days")
+    logger.info(
+        "Wrote %s  —  %s rows  |  %s symbols  |  %s trading days",
+        out,
+        f"{rows:,}",
+        f"{symbols:,}",
+        f"{dates:,}",
+    )
 
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Merge per-ticker Parquet files into one file for the backtest engine."
     )

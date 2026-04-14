@@ -51,12 +51,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import time
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -247,36 +250,35 @@ def run(
     today = date.today()
     total = len(symbols)
 
-    print(f"\nmarket_data options  —  {today}")
-    print(f"  Tickers    : {total}")
-    print(f"  Max expiries: {max_expiries}")
-    print(f"{'='*55}")
+    logger.info("market_data options  —  %s", today)
+    logger.info("Tickers: %d  max_expiries: %d", total, max_expiries)
 
     saved_rows = 0
     skipped = 0
     failed = 0
 
     for i, symbol in enumerate(symbols, 1):
-        prefix = f"  [{i:>3}/{total}] {symbol:<8}"
+        prefix = f"[{i:>3}/{total}] {symbol:<8}"
         try:
             df = fetch_option_chain(symbol, max_expiries=max_expiries)
             if df.empty:
-                print(f"{prefix}  no data")
+                logger.info("%s  no data", prefix)
                 skipped += 1
             else:
                 added = save_options_snapshot(symbol, df, options_dir)
                 expiry_count = df["expiry"].nunique()
-                print(f"{prefix}  +{added} rows  ({expiry_count} expiries)")
+                logger.info("%s  +%d rows  (%d expiries)", prefix, added, expiry_count)
                 saved_rows += added
         except Exception as exc:
-            print(f"{prefix}  ERROR: {exc}")
+            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             failed += 1
 
         if i < total:
             time.sleep(SLEEP_BETWEEN_CALLS)
 
-    print(f"{'='*55}")
-    print(f"Done.  Rows saved: {saved_rows}  |  Skipped: {skipped}  |  Failed: {failed}\n")
+    logger.info(
+        "options done: rows_saved=%d  skipped=%d  failed=%d", saved_rows, skipped, failed
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +286,9 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description=(
             "Fetch daily option chain snapshots (IV, bid/ask, OI) for SP500 tickers "
@@ -320,14 +325,14 @@ def main() -> None:
 
     # --- Load state ---
     if not STATE_FILE.exists():
-        print("No state.json found. Run market-data-run first to onboard tickers.")
+        logger.warning("No state.json found. Run market-data-run first to onboard tickers.")
         return
 
     state = json.loads(STATE_FILE.read_text())
     onboarded: set[str] = set(state.get("onboarded", []))
 
     if not onboarded:
-        print("No onboarded tickers in state.json. Run market-data-run first.")
+        logger.warning("No onboarded tickers in state.json. Run market-data-run first.")
         return
 
     sp500 = get_sp500_symbols(onboarded)
@@ -337,7 +342,7 @@ def main() -> None:
     all_symbols = etfs + [s for s in sp500 if s not in etf_set]
 
     if not all_symbols:
-        print("No eligible tickers found in onboarded set.")
+        logger.warning("No eligible tickers found in onboarded set.")
         return
 
     # --- Determine batch from cycle state ---
@@ -348,7 +353,9 @@ def main() -> None:
 
     if not pending:
         # Full cycle complete — reset and start over
-        print(f"Options cycle complete ({len(all_symbols)} tickers covered). Resetting cycle.")
+        logger.info(
+            "Options cycle complete (%d tickers covered). Resetting cycle.", len(all_symbols)
+        )
         cycle_done = []
         cycle_done_set = set()
         pending = list(all_symbols)
@@ -356,8 +363,13 @@ def main() -> None:
     batch = pending[:args.batch_size]
     remaining_after = len(pending) - len(batch)
 
-    print(f"\nOptions cycle progress: {len(cycle_done_set)}/{len(all_symbols)} done  "
-          f"|  {len(pending)} pending  |  processing {len(batch)} this run")
+    logger.info(
+        "Options cycle progress: %d/%d done  |  %d pending  |  processing %d this run",
+        len(cycle_done_set),
+        len(all_symbols),
+        len(pending),
+        len(batch),
+    )
 
     run(symbols=batch, max_expiries=args.max_expiries)
 
@@ -366,10 +378,12 @@ def main() -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2, default=str))
 
     if remaining_after == 0:
-        print(f"Options cycle complete — all {len(all_symbols)} tickers covered.")
+        logger.info(
+            "Options cycle complete — all %d tickers covered.", len(all_symbols)
+        )
     else:
         days_remaining = (remaining_after + args.batch_size - 1) // args.batch_size
-        print(f"~{days_remaining} more run(s) to complete this cycle.")
+        logger.info("~%d more run(s) to complete this cycle.", days_remaining)
 
 
 if __name__ == "__main__":

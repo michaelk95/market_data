@@ -14,8 +14,11 @@ Usage:
 
 import argparse
 import json
+import logging
+import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
 STATE_FILE = Path("state.json")
 DATA_DIR   = Path("data/ohlcv")
@@ -54,6 +57,9 @@ def fix(state_file: Path, ghosts: list[str]) -> int:
 
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Verify onboarded tickers in state.json have data files on disk."
     )
@@ -72,35 +78,42 @@ def main() -> None:
     ghosts, orphans = check(state_file, data_dir)
 
     # --- Report ---
-    print(f"\nOnboarded in state : {len(json.loads(state_file.read_text()).get('onboarded', []))}")
-    print(f"Files on disk       : {len(list(data_dir.glob('*.parquet')))}")
+    n_onboarded = len(json.loads(state_file.read_text()).get("onboarded", []))
+    n_files = len(list(data_dir.glob("*.parquet")))
+    logger.info("Onboarded in state: %d", n_onboarded)
+    logger.info("Files on disk: %d", n_files)
 
     if ghosts:
-        print(f"\n{'-'*50}")
-        print(f"GHOSTS -- {len(ghosts)} ticker(s) onboarded in state but missing data file:")
-        for sym in ghosts:
-            print(f"  {sym}")
-        print(f"{'-'*50}")
+        logger.warning(
+            "GHOSTS — %d ticker(s) onboarded in state but missing data file: %s",
+            len(ghosts),
+            ghosts,
+        )
     else:
-        print("\nOK  No ghosts -- every onboarded ticker has a data file.")
+        logger.info("OK  No ghosts — every onboarded ticker has a data file.")
 
     if orphans:
-        # Orphans aren't a problem -- they may be leftover from manual testing, etc.
-        print(f"\nOrphans (file exists but not in state) -- {len(orphans)} ticker(s):")
-        for sym in orphans:
-            print(f"  {sym}")
-        print("  (These are informational -- the pipeline will not re-fetch them.)")
+        logger.info(
+            "Orphans (file exists but not in state) — %d ticker(s): %s  "
+            "(informational — the pipeline will not re-fetch them.)",
+            len(orphans),
+            orphans,
+        )
 
     # --- Fix ---
     if args.fix:
         if not ghosts:
-            print("\nNothing to fix.")
+            logger.info("Nothing to fix.")
         else:
             removed = fix(state_file, ghosts)
-            print(f"\nFixed: removed {removed} ghost(s) from {state_file}.")
-            print("Run the pipeline to re-onboard them.")
+            logger.info(
+                "Fixed: removed %d ghost(s) from %s. Run the pipeline to re-onboard them.",
+                removed,
+                state_file,
+            )
     elif ghosts:
-        print("\nRun with --fix to remove ghost(s) from state.json.")
+        logger.info("Run with --fix to remove ghost(s) from state.json.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

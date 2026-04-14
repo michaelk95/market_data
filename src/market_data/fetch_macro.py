@@ -39,11 +39,14 @@ Usage
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -219,11 +222,11 @@ def update_series(series_id: str, api_key: str, start: str, macro_dir: Path) -> 
     df = fetch_series(series_id, start=fetch_start, api_key=api_key)
 
     if df.empty:
-        print(f"  {series_id:<12}  no data  ({action})")
+        logger.info("%s  no data  (%s)", series_id, action)
         return 0
 
     added = save_macro_series(series_id, df, macro_dir)
-    print(f"  {series_id:<12}  +{added} rows  ({action})")
+    logger.info("%s  +%d rows  (%s)", series_id, added, action)
     return added
 
 
@@ -240,9 +243,8 @@ def run(
 
     api_key = _load_api_key()
 
-    print(f"\nmarket_data macro  —  {today}")
-    print(f"  Series  : {', '.join(targets)}")
-    print(f"{'='*55}")
+    logger.info("market_data macro  —  %s", today)
+    logger.info("Series: %s", ", ".join(targets))
 
     total_added = 0
     for series_id in targets:
@@ -250,10 +252,9 @@ def run(
             added = update_series(series_id, api_key=api_key, start=start, macro_dir=macro_dir)
             total_added += added
         except Exception as exc:
-            print(f"  {series_id:<12}  ERROR: {exc}")
+            logger.error("%s  ERROR: %s", series_id, exc, exc_info=True)
 
-    print(f"{'='*55}")
-    print(f"Done.  {total_added} new rows across {len(targets)} series.\n")
+    logger.info("macro done: %d new rows across %d series", total_added, len(targets))
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +262,9 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Fetch/update macroeconomic series from FRED (CPI, GDP, Treasury, etc.)."
     )
