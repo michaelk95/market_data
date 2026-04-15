@@ -25,6 +25,7 @@ market-data-fetch-indices       = "market_data.fetch_indices:main"
 market-data-fetch-macro         = "market_data.fetch_macro:main"
 market-data-fetch-fundamentals  = "market_data.fetch_fundamentals:main"
 market-data-fetch-options       = "market_data.fetch_options:main"
+market-data-health              = "market_data.health:main"
 
 [project.optional-dependencies]
 dev = [
