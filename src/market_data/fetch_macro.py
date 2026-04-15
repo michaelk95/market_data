@@ -46,33 +46,40 @@ from pathlib import Path
 
 import pandas as pd
 
+from market_data.config import cfg as _cfg
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-MACRO_DIR = Path("data/macro")
+MACRO_DIR = Path(_cfg.get("paths.macro_dir", "data/macro"))
 
 # Default bootstrap start date — FRED has data going back decades for most series
-DEFAULT_START = "1990-01-01"
+DEFAULT_START: str = _cfg.get("collection.macro_start", "1990-01-01")
 
-# Series to collect by default, grouped by frequency (for documentation clarity)
-DEFAULT_SERIES: list[str] = [
-    # Daily
-    "DFF",       # Effective Federal Funds Rate
-    "T10Y2Y",    # 10yr minus 2yr Treasury yield spread
-    # Monthly
-    "CPIAUCSL",  # CPI headline
-    "CPILFESL",  # Core CPI
-    "PCEPI",     # PCE Price Index
-    "PCEPILFE",  # Core PCE
-    "UNRATE",    # Unemployment Rate
-    "PAYEMS",    # Nonfarm Payrolls
-    # Quarterly
-    "GDPC1",     # Real GDP
-    "GDP",       # Nominal GDP
-]
+# Series to collect by default — keys of the macro.series mapping in config.yaml
+DEFAULT_SERIES: list[str] = list(
+    _cfg.get(
+        "macro.series",
+        {
+            # Daily
+            "DFF":      "Effective Federal Funds Rate",
+            "T10Y2Y":   "10yr minus 2yr Treasury yield spread",
+            # Monthly
+            "CPIAUCSL": "CPI All Urban Consumers (headline)",
+            "CPILFESL": "Core CPI (ex food & energy)",
+            "PCEPI":    "PCE Price Index",
+            "PCEPILFE": "Core PCE",
+            "UNRATE":   "Unemployment Rate",
+            "PAYEMS":   "Nonfarm Payrolls",
+            # Quarterly
+            "GDPC1":    "Real GDP (chained 2017 dollars)",
+            "GDP":      "Nominal GDP",
+        },
+    ).keys()
+)
 
 
 # ---------------------------------------------------------------------------

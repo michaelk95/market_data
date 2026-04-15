@@ -59,19 +59,21 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
+from market_data.config import cfg as _cfg
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-OPTIONS_DIR = Path("data/options")
-STATE_FILE = Path("state.json")
-TICKERS_FILE = Path("tickers.csv")
+OPTIONS_DIR = Path(_cfg.get("paths.options_dir", "data/options"))
+STATE_FILE = Path(_cfg.get("paths.state_file", "state.json"))
+TICKERS_FILE = Path(_cfg.get("paths.tickers_file", "tickers.csv"))
 
-DEFAULT_BATCH_SIZE = 50
-DEFAULT_MAX_EXPIRIES = 4
-SLEEP_BETWEEN_CALLS = 5  # seconds
+DEFAULT_BATCH_SIZE: int = _cfg.get("collection.options_batch_size", 50)
+DEFAULT_MAX_EXPIRIES: int = _cfg.get("collection.options_max_expiries", 4)
+SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.options", 5)
 
 OPTIONS_COLS = [
     "snapshot_date",
