@@ -34,7 +34,6 @@ from pathlib import Path
 import pandas as pd
 
 from .schema import (
-    BITEMPORAL_COLUMNS,
     DEDUP_KEYS,
     PARTITION_COLS,
     SORT_KEYS,
