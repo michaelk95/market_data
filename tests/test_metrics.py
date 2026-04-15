@@ -5,9 +5,6 @@ persistence to metrics.json, load_history(), and 90-day retention pruning.
 
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-import pytest
 
 import market_data.metrics as metrics_mod
 
