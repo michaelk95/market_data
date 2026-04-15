@@ -52,6 +52,7 @@ from pathlib import Path
 import pandas as pd
 
 from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
+from market_data import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -175,10 +176,15 @@ def maybe_run_fundamentals(
     )
     try:
         from market_data import fetch_fundamentals  # noqa: PLC0415
+        metrics.start_run("fundamentals")
         fetch_fundamentals.run(symbols=symbols)
+        for s in symbols:
+            metrics.record_symbol_result(s, success=True)
+        metrics.finish_run()
         return True
     except Exception as exc:
         logger.warning("Fundamentals fetch failed: %s.", exc, exc_info=True)
+        metrics.finish_run()
         return False
 
 
@@ -232,20 +238,23 @@ def step_options(
         remaining_after,
     )
 
+    metrics.start_run("options")
     fetch_options.run(symbols=batch, max_expiries=max_expiries)
 
     # Silent failure detection: warn if all symbols produced no options data
     if batch:
         from market_data.fetch_options import OPTIONS_DIR  # noqa: PLC0415
-        options_written = sum(
-            1 for s in batch
-            if (OPTIONS_DIR / f"{s}.parquet").exists()
-        )
+        for s in batch:
+            wrote = (OPTIONS_DIR / f"{s}.parquet").exists()
+            metrics.record_symbol_result(s, success=wrote, reason="no options file written" if not wrote else None)
+        options_written = sum(1 for s in batch if (OPTIONS_DIR / f"{s}.parquet").exists())
         if options_written == 0:
             logger.warning(
                 "OPTIONS silent failure: processed %d symbol(s) but no options files exist",
                 len(batch),
             )
+
+    metrics.finish_run()
 
     updated_cycle = cycle_done | set(batch)
     if remaining_after == 0:
@@ -305,21 +314,27 @@ def step_onboard(
         len(pending) - len(to_onboard),
     )
 
+    metrics.start_run("onboard")
     for i, symbol in enumerate(to_onboard, 1):
         prefix = f"[{i:>3}/{len(to_onboard)}] {symbol:<8}"
         try:
             df = fetch_history(symbol, years=DEFAULT_HISTORY_YEARS)
             if df.empty:
                 logger.info("%s  no data (skipping)", prefix)
+                metrics.record_symbol_result(symbol, success=False, reason="no data")
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
                 newly_onboarded.add(symbol)
                 logger.info("%s  %d rows saved", prefix, added)
+                metrics.record_symbol_result(symbol, success=True, rows_written=added)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             failed.add(symbol)
+            metrics.record_symbol_result(symbol, success=False, reason=str(exc))
 
         time.sleep(SLEEP_BETWEEN_CALLS)
+
+    metrics.finish_run()
 
     # Silent failure detection
     if to_onboard and not newly_onboarded:
@@ -347,6 +362,7 @@ def step_update(
 
     logger.info("UPDATE   %d tickers  (since %s)", len(to_update), since)
 
+    metrics.start_run("update")
     total_rows = 0
     for i, symbol in enumerate(to_update, 1):
         prefix = f"[{i:>4}/{len(to_update)}] {symbol:<8}"
@@ -355,16 +371,21 @@ def step_update(
             if df.empty:
                 logger.info("%s  up to date", prefix)
                 results[symbol] = 0
+                metrics.record_symbol_result(symbol, success=True, rows_written=0)
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
                 logger.info("%s  +%d rows", prefix, added)
                 results[symbol] = added
                 total_rows += added
+                metrics.record_symbol_result(symbol, success=True, rows_written=added)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             results[symbol] = 0
+            metrics.record_symbol_result(symbol, success=False, reason=str(exc))
 
         time.sleep(SLEEP_BETWEEN_CALLS)
+
+    metrics.finish_run()
 
     # Silent failure detection: if last_run was recent but all symbols returned 0
     # rows AND the batch is large enough that some data was expected, warn.
@@ -456,12 +477,16 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     # --- 5. Optional indices update ---
     if run_indices:
         from market_data import fetch_indices  # noqa: PLC0415
+        metrics.start_run("indices")
         fetch_indices.run()
+        metrics.finish_run()
 
     # --- 6. Optional macro update ---
     if run_macro:
         from market_data import fetch_macro  # noqa: PLC0415
+        metrics.start_run("macro")
         fetch_macro.run()
+        metrics.finish_run()
 
     # --- 7. Persist state ---
     state["onboarded"] = sorted(onboarded)
