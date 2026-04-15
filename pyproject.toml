@@ -16,6 +16,7 @@ dependencies = [
   "fredapi>=0.5",
   "python-dotenv>=1.0",
   "pyyaml>=6.0",
+  "tenacity>=8.2",
 ]
 
 [project.scripts]
@@ -27,6 +28,7 @@ market-data-fetch-macro         = "market_data.fetch_macro:main"
 market-data-fetch-fundamentals  = "market_data.fetch_fundamentals:main"
 market-data-fetch-options       = "market_data.fetch_options:main"
 market-data-health              = "market_data.health:main"
+market-data-smoke-test          = "market_data.smoke_test:main"
 
 [project.optional-dependencies]
 dev = [

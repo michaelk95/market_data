@@ -87,6 +87,20 @@ sources:
     indices:       3
 
 # ---------------------------------------------------------------------------
+# resilience: retry and failure-quarantine settings
+# ---------------------------------------------------------------------------
+resilience:
+  # Maximum number of attempts per fetch call (1 = no retry)
+  retry_attempts: 3
+
+  # Exponential back-off bounds in seconds
+  retry_min_wait: 2
+  retry_max_wait: 60
+
+  # Consecutive failures before a ticker is quarantined (skipped by the pipeline)
+  quarantine_threshold: 5
+
+# ---------------------------------------------------------------------------
 # health: maximum acceptable age (days) for each data type
 # ---------------------------------------------------------------------------
 health:

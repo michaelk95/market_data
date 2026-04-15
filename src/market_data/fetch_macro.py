@@ -47,6 +47,7 @@ from pathlib import Path
 import pandas as pd
 
 from market_data.config import cfg as _cfg
+from market_data.resilience import fred_retry
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,7 @@ def save_macro_series(series_id: str, new_df: pd.DataFrame, macro_dir: Path) -> 
 # Fetch
 # ---------------------------------------------------------------------------
 
+@fred_retry
 def fetch_series(
     series_id: str,
     start: str,

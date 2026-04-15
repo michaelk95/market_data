@@ -60,6 +60,7 @@ import pandas as pd
 import yfinance as yf
 
 from market_data.config import cfg as _cfg
+from market_data.resilience import yf_retry
 
 logger = logging.getLogger(__name__)
 
@@ -131,19 +132,31 @@ def get_etf_symbols(onboarded: set[str]) -> list[str]:
 # Fetch
 # ---------------------------------------------------------------------------
 
+@yf_retry
+def _get_expiry_dates(ticker: yf.Ticker) -> tuple:
+    """Return available option expiry dates for *ticker*. Raises on network failure."""
+    return ticker.options
+
+
+@yf_retry
+def _get_option_chain(ticker: yf.Ticker, expiry_str: str):
+    """Fetch one option chain for *ticker* / *expiry_str*. Raises on network failure."""
+    return ticker.option_chain(expiry_str)
+
+
 def fetch_option_chain(symbol: str, max_expiries: int) -> pd.DataFrame:
     """
     Fetch the nearest `max_expiries` option chains for `symbol`.
 
     Returns a DataFrame with OPTIONS_COLS schema, or an empty DataFrame if
     no data is available.
+
+    Raises on transient network errors after retries are exhausted so the
+    caller can distinguish an outage from a ticker with no listed options.
     """
     ticker = yf.Ticker(symbol)
 
-    try:
-        expiry_dates = ticker.options  # tuple of expiry date strings
-    except Exception:
-        return pd.DataFrame(columns=OPTIONS_COLS)
+    expiry_dates = _get_expiry_dates(ticker)  # raises on network failure
 
     if not expiry_dates:
         return pd.DataFrame(columns=OPTIONS_COLS)
@@ -154,8 +167,10 @@ def fetch_option_chain(symbol: str, max_expiries: int) -> pd.DataFrame:
 
     for expiry_str in selected:
         try:
-            chain = ticker.option_chain(expiry_str)
+            chain = _get_option_chain(ticker, expiry_str)
         except Exception:
+            # One expiry failing does not block the rest — skip and continue
+            logger.warning("%s  could not fetch expiry %s — skipping", symbol, expiry_str)
             continue
 
         for side, df_raw in (("call", chain.calls), ("put", chain.puts)):

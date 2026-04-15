@@ -21,6 +21,7 @@ import pandas as pd
 import yfinance as yf
 
 from market_data.config import cfg as _cfg
+from market_data.resilience import yf_retry
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -81,6 +82,7 @@ def _ticker_path(symbol: str, data_dir: Path) -> Path:
 # Public API
 # ---------------------------------------------------------------------------
 
+@yf_retry
 def fetch_history(symbol: str, years: int = DEFAULT_HISTORY_YEARS) -> pd.DataFrame:
     """
     Download `years` of daily OHLCV history for `symbol`.
@@ -100,6 +102,7 @@ def fetch_history(symbol: str, years: int = DEFAULT_HISTORY_YEARS) -> pd.DataFra
     return _normalize(raw, symbol)
 
 
+@yf_retry
 def fetch_incremental(symbol: str, since: date) -> pd.DataFrame:
     """
     Download daily OHLCV data for `symbol` from `since` onward.
