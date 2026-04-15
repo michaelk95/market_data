@@ -24,6 +24,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 from datetime import date
 from pathlib import Path
@@ -35,6 +36,8 @@ from market_data.fetch import (
     load_ticker_data,
     save_ticker_data,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -78,11 +81,11 @@ def update_symbol(symbol: str, history_years: int) -> int:
         action = f"incremental since {last_date}"
 
     if df.empty:
-        print(f"  {symbol:<8}  no data  ({action})")
+        logger.info("%s  no data  (%s)", symbol, action)
         return 0
 
     added = save_ticker_data(symbol, df, INDICES_DIR)
-    print(f"  {symbol:<8}  +{added} rows  ({action})")
+    logger.info("%s  +%d rows  (%s)", symbol, added, action)
     return added
 
 
@@ -93,9 +96,8 @@ def run(symbols: list[str] | None = None, history_years: int = DEFAULT_HISTORY_Y
     targets = symbols or INDEX_SYMBOLS
     today = date.today()
 
-    print(f"\nmarket_data indices  —  {today}")
-    print(f"  Symbols: {', '.join(targets)}")
-    print(f"{'='*50}")
+    logger.info("market_data indices  —  %s", today)
+    logger.info("Symbols: %s", ", ".join(targets))
 
     total_added = 0
     for i, symbol in enumerate(targets):
@@ -103,13 +105,12 @@ def run(symbols: list[str] | None = None, history_years: int = DEFAULT_HISTORY_Y
             added = update_symbol(symbol, history_years)
             total_added += added
         except Exception as exc:
-            print(f"  {symbol:<8}  ERROR: {exc}")
+            logger.error("%s  ERROR: %s", symbol, exc, exc_info=True)
 
         if i < len(targets) - 1:
             time.sleep(SLEEP_BETWEEN_CALLS)
 
-    print(f"{'='*50}")
-    print(f"Done.  {total_added} new rows across {len(targets)} symbols.\n")
+    logger.info("indices done: %d new rows across %d symbols", total_added, len(targets))
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +118,9 @@ def run(symbols: list[str] | None = None, history_years: int = DEFAULT_HISTORY_Y
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Fetch/update market index and rate data (VIX, Treasury yields, etc.)."
     )

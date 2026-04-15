@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import time
 from datetime import date
 from pathlib import Path
@@ -51,6 +52,8 @@ from pathlib import Path
 import pandas as pd
 
 from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths & defaults
@@ -115,17 +118,23 @@ def maybe_refresh_tickers(
     if last_raw:
         days_since = (today - date.fromisoformat(last_raw)).days
         if days_since < TICKER_REFRESH_DAYS:
-            print(f"  Ticker list is fresh ({days_since}d old, threshold {TICKER_REFRESH_DAYS}d)")
+            logger.info(
+                "Ticker list is fresh (%dd old, threshold %dd)",
+                days_since,
+                TICKER_REFRESH_DAYS,
+            )
             return False
 
-    print(f"\nRefreshing ticker list (last refresh: {last_raw or 'never'})...")
+    logger.info("Refreshing ticker list (last refresh: %s)...", last_raw or "never")
     try:
         from market_data import fetch_tickers  # noqa: PLC0415
         fetch_tickers.run(tickers_path, today=today.isoformat())
-        print("  Ticker list refreshed successfully.")
+        logger.info("Ticker list refreshed successfully.")
         return True
     except Exception as exc:
-        print(f"  WARNING: Ticker refresh failed: {exc}. Continuing with existing list.")
+        logger.warning(
+            "Ticker refresh failed: %s. Continuing with existing list.", exc, exc_info=True
+        )
         return False
 
 
@@ -148,21 +157,28 @@ def maybe_run_fundamentals(
     if last_raw:
         days_since = (today - date.fromisoformat(last_raw)).days
         if days_since < FUNDAMENTALS_REFRESH_DAYS:
-            print(f"  Fundamentals are fresh ({days_since}d old, threshold {FUNDAMENTALS_REFRESH_DAYS}d)")
+            logger.info(
+                "Fundamentals are fresh (%dd old, threshold %dd)",
+                days_since,
+                FUNDAMENTALS_REFRESH_DAYS,
+            )
             return False
 
     # ETFs are fund wrappers — their yfinance .info fields don't map to the
     # equity fundamentals schema (no P/E, margins, analyst targets, etc.).
     from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
     symbols = sorted(s for s in onboarded if s not in ALL_ETFS)
-    print(f"\nFetching fundamentals for {len(symbols)} tickers "
-          f"(last run: {last_raw or 'never'})...")
+    logger.info(
+        "Fetching fundamentals for %d tickers (last run: %s)...",
+        len(symbols),
+        last_raw or "never",
+    )
     try:
         from market_data import fetch_fundamentals  # noqa: PLC0415
         fetch_fundamentals.run(symbols=symbols)
         return True
     except Exception as exc:
-        print(f"  WARNING: Fundamentals fetch failed: {exc}.")
+        logger.warning("Fundamentals fetch failed: %s.", exc, exc_info=True)
         return False
 
 
@@ -192,30 +208,50 @@ def step_options(
     all_symbols = etfs + [s for s in sp500 if s not in etf_set]
 
     if not all_symbols:
-        print("  OPTIONS  no eligible tickers in onboarded set — skipping.")
+        logger.info("OPTIONS  no eligible tickers in onboarded set — skipping.")
         return set(state.get("options_cycle", []))
 
     cycle_done: set[str] = set(state.get("options_cycle", []))
     pending = [s for s in all_symbols if s not in cycle_done]
 
     if not pending:
-        print(f"  OPTIONS  cycle complete ({len(all_symbols)} tickers). Resetting cycle.")
+        logger.info(
+            "OPTIONS  cycle complete (%d tickers). Resetting cycle.", len(all_symbols)
+        )
         cycle_done = set()
         pending = list(all_symbols)
 
     batch = pending[:batch_size]
     remaining_after = len(pending) - len(batch)
 
-    print(f"\n{'='*60}")
-    print(f"OPTIONS  {len(batch)} tickers  "
-          f"(cycle: {len(cycle_done)}/{len(all_symbols)} done, {remaining_after} remaining after this batch)")
-    print(f"{'='*60}")
+    logger.info(
+        "OPTIONS  %d tickers  (cycle: %d/%d done, %d remaining after this batch)",
+        len(batch),
+        len(cycle_done),
+        len(all_symbols),
+        remaining_after,
+    )
 
     fetch_options.run(symbols=batch, max_expiries=max_expiries)
 
+    # Silent failure detection: warn if all symbols produced no options data
+    if batch:
+        from market_data.fetch_options import OPTIONS_DIR  # noqa: PLC0415
+        options_written = sum(
+            1 for s in batch
+            if (OPTIONS_DIR / f"{s}.parquet").exists()
+        )
+        if options_written == 0:
+            logger.warning(
+                "OPTIONS silent failure: processed %d symbol(s) but no options files exist",
+                len(batch),
+            )
+
     updated_cycle = cycle_done | set(batch)
     if remaining_after == 0:
-        print(f"  Options cycle complete — all {len(all_symbols)} tickers covered.")
+        logger.info(
+            "Options cycle complete — all %d tickers covered.", len(all_symbols)
+        )
         return set()  # reset for next cycle
     return updated_cycle
 
@@ -263,26 +299,34 @@ def step_onboard(
     if not to_onboard:
         return newly_onboarded, failed
 
-    print(f"\n{'='*60}")
-    print(f"ONBOARD  {len(to_onboard)} new tickers  "
-          f"({len(pending) - len(to_onboard)} still pending after this run)")
-    print(f"{'='*60}")
+    logger.info(
+        "ONBOARD  %d new tickers  (%d still pending after this run)",
+        len(to_onboard),
+        len(pending) - len(to_onboard),
+    )
 
     for i, symbol in enumerate(to_onboard, 1):
-        prefix = f"  [{i:>3}/{len(to_onboard)}] {symbol:<8}"
+        prefix = f"[{i:>3}/{len(to_onboard)}] {symbol:<8}"
         try:
             df = fetch_history(symbol, years=DEFAULT_HISTORY_YEARS)
             if df.empty:
-                print(f"{prefix}  no data (skipping)")
+                logger.info("%s  no data (skipping)", prefix)
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
                 newly_onboarded.add(symbol)
-                print(f"{prefix}  {added:>5} rows saved")
+                logger.info("%s  %d rows saved", prefix, added)
         except Exception as exc:
-            print(f"{prefix}  ERROR: {exc}")
+            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             failed.add(symbol)
 
         time.sleep(SLEEP_BETWEEN_CALLS)
+
+    # Silent failure detection
+    if to_onboard and not newly_onboarded:
+        logger.warning(
+            "ONBOARD silent failure: attempted %d symbol(s) but none succeeded",
+            len(to_onboard),
+        )
 
     return newly_onboarded, failed
 
@@ -301,26 +345,39 @@ def step_update(
     if not to_update:
         return results
 
-    print(f"\n{'='*60}")
-    print(f"UPDATE   {len(to_update)} tickers  (since {since})")
-    print(f"{'='*60}")
+    logger.info("UPDATE   %d tickers  (since %s)", len(to_update), since)
 
+    total_rows = 0
     for i, symbol in enumerate(to_update, 1):
-        prefix = f"  [{i:>4}/{len(to_update)}] {symbol:<8}"
+        prefix = f"[{i:>4}/{len(to_update)}] {symbol:<8}"
         try:
             df = fetch_incremental(symbol, since=since)
             if df.empty:
-                print(f"{prefix}  up to date")
+                logger.info("%s  up to date", prefix)
                 results[symbol] = 0
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
-                print(f"{prefix}  +{added} rows")
+                logger.info("%s  +%d rows", prefix, added)
                 results[symbol] = added
+                total_rows += added
         except Exception as exc:
-            print(f"{prefix}  ERROR: {exc}")
+            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             results[symbol] = 0
 
         time.sleep(SLEEP_BETWEEN_CALLS)
+
+    # Silent failure detection: if last_run was recent but all symbols returned 0
+    # rows AND the batch is large enough that some data was expected, warn.
+    days_since_last = (date.today() - since).days
+    if to_update and total_rows == 0 and days_since_last >= 2:
+        logger.warning(
+            "UPDATE silent failure: %d symbol(s) updated since %s (%dd ago) "
+            "but 0 total rows written — market may have been closed or "
+            "there may be a data source issue",
+            len(to_update),
+            since,
+            days_since_last,
+        )
 
     return results
 
@@ -344,12 +401,15 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     all_tickers = load_ordered_tickers()
     pending = [t for t in all_tickers if t not in onboarded]
 
-    print(f"\nmarket_data orchestrator  —  {today}")
-    print(f"  Tickers in list  : {len(all_tickers)}")
-    print(f"  Already onboarded: {len(onboarded)}")
-    print(f"  Pending          : {len(pending)}")
-    print(f"  Last run         : {last_run or 'never'}")
-    print(f"  Last ticker refresh: {state.get('last_ticker_refresh') or 'never'}")
+    logger.info(
+        "market_data orchestrator  —  %s  |  tickers=%d  onboarded=%d  pending=%d  last_run=%s",
+        today,
+        len(all_tickers),
+        len(onboarded),
+        len(pending),
+        last_run or "never",
+    )
+    logger.info("Last ticker refresh: %s", state.get("last_ticker_refresh") or "never")
 
     # --- 1a. Priority-onboard ETFs (outside the normal batch limit) ---
     # ETFs sit at the bottom of tickers.csv (NaN market_value sorts last) so
@@ -359,7 +419,7 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     etf_pending = [t for t in ALL_ETFS if t not in onboarded and t in set(all_tickers)]
     etf_newly_onboarded: set[str] = set()
     if etf_pending:
-        print(f"\n  ETFs pending onboarding: {etf_pending}")
+        logger.info("ETFs pending onboarding: %s", etf_pending)
         etf_newly_onboarded, _ = step_onboard(
             etf_pending, batch_size=len(etf_pending), onboarded=onboarded
         )
@@ -379,7 +439,7 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
         to_update = [t for t in all_tickers if t in onboarded and t not in all_newly_onboarded]
         step_update(to_update, since=last_run)
     elif not skip_update and not last_run:
-        print("\nUPDATE   skipped — no previous run date in state.json")
+        logger.info("UPDATE   skipped — no previous run date in state.json")
 
     # --- 3. Optional fundamentals snapshot (auto-throttled to monthly) ---
     fundamentals_ran = False
@@ -414,23 +474,30 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
         state["options_cycle"] = sorted(updated_options_cycle)
     save_state(state)
 
-    # --- 7. Summary ---
+    # --- 8. Summary ---
     remaining = len([t for t in all_tickers if t not in onboarded])
-    print(f"\n{'='*60}")
-    print(f"Done.  Onboarded: {len(onboarded)}/{len(all_tickers)}  |  "
-          f"Remaining: {remaining}")
+    logger.info(
+        "Done.  Onboarded: %d/%d  |  Remaining: %d",
+        len(onboarded),
+        len(all_tickers),
+        remaining,
+    )
     if remaining > 0 and batch_size > 0:
         eta = (remaining + batch_size - 1) // batch_size
-        print(f"At {batch_size} tickers/day  →  ~{eta} more day(s) to full coverage")
-    print(f"{'='*60}\n")
+        logger.info(
+            "At %d tickers/day  →  ~%d more day(s) to full coverage", batch_size, eta
+        )
 
-    # --- 8. Optional merge ---
+    # --- 9. Optional merge ---
     if run_merge:
         from market_data import merge  # noqa: PLC0415
         merge.run(DATA_DIR)
 
 
 def main() -> None:
+    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Daily OHLCV data pipeline for the paper_trading engine."
     )
