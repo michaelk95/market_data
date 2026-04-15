@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from market_data import smoke_test
 from market_data.smoke_test import (
     check_fred,
