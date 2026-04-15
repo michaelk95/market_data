@@ -1,0 +1,275 @@
+"""Unified read/write utilities for the bitemporal market data store.
+
+Storage layout
+--------------
+Tables with high row counts (ohlcv, fundamentals, options) are partitioned
+by calendar year using Hive-style directory naming:
+
+    data/<table>/year=2024/data.parquet
+    data/<table>/year=2023/data.parquet
+    ...
+
+Small, reference-sized tables (indices, macro) are stored as a single file:
+
+    data/<table>/data.parquet
+
+All writes are atomic (write to .tmp, then rename) and idempotent
+(deduplication on each table's DEDUP_KEYS before every save).
+
+Public API
+----------
+write_table(df, table_name, data_dir) -> int
+    Merge df into the table; return number of net new rows written.
+
+read_table(table_name, data_dir, *, start_date, end_date,
+           symbols, series_ids, columns) -> pd.DataFrame
+    Read rows from the table, with optional pushdown-style filters.
+"""
+
+from __future__ import annotations
+
+import datetime
+from pathlib import Path
+
+import pandas as pd
+
+from .schema import (
+    DEDUP_KEYS,
+    PARTITION_COLS,
+    SORT_KEYS,
+    TABLE_SCHEMAS,
+    validate_bitemporal_columns,
+)
+
+__all__ = ["write_table", "read_table"]
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def write_table(
+    df: pd.DataFrame,
+    table_name: str,
+    data_dir: Path,
+) -> int:
+    """Merge *df* into the unified table and return the number of net new rows.
+
+    Parameters
+    ----------
+    df:
+        DataFrame conforming to the bitemporal schema for *table_name*.  Must
+        contain all columns listed in ``schema.BITEMPORAL_COLUMNS``.
+    table_name:
+        One of ``"ohlcv"``, ``"indices"``, ``"fundamentals"``, ``"macro"``,
+        ``"options"``.
+    data_dir:
+        Root data directory (e.g. ``Path("data")``).
+
+    Returns
+    -------
+    int
+        Number of rows that were genuinely new (i.e. not already present).
+    """
+    if table_name not in TABLE_SCHEMAS:
+        raise ValueError(
+            f"Unknown table '{table_name}'. Valid names: {sorted(TABLE_SCHEMAS)}"
+        )
+    if df.empty:
+        return 0
+
+    validate_bitemporal_columns(df)
+
+    dedup_keys = DEDUP_KEYS[table_name]
+    sort_keys = SORT_KEYS[table_name]
+    partition_cols = PARTITION_COLS[table_name]
+    table_dir = data_dir / table_name
+
+    df = df.copy()
+    total_new = 0
+
+    if not partition_cols:
+        # Non-partitioned table: single data.parquet
+        path = table_dir / "data.parquet"
+        total_new = _merge_write(path, df, dedup_keys, sort_keys)
+    else:
+        # Partitioned by year extracted from period_start_date
+        df["_year"] = pd.to_datetime(df["period_start_date"]).dt.year
+        for year, group in df.groupby("_year"):
+            part_path = table_dir / f"year={int(year)}" / "data.parquet"
+            rows_to_write = group.drop(columns=["_year"])
+            total_new += _merge_write(part_path, rows_to_write, dedup_keys, sort_keys)
+
+    return total_new
+
+
+def read_table(
+    table_name: str,
+    data_dir: Path,
+    *,
+    start_date: datetime.date | None = None,
+    end_date: datetime.date | None = None,
+    symbols: list[str] | None = None,
+    series_ids: list[str] | None = None,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """Read rows from *table_name*, optionally filtered.
+
+    Parameters
+    ----------
+    table_name:
+        One of ``"ohlcv"``, ``"indices"``, ``"fundamentals"``, ``"macro"``,
+        ``"options"``.
+    data_dir:
+        Root data directory.
+    start_date:
+        Inclusive lower bound on ``period_start_date``.
+    end_date:
+        Inclusive upper bound on ``period_start_date``.
+    symbols:
+        If provided, return only rows whose ``symbol`` is in this list.
+        Applies to ``ohlcv``, ``indices``, ``fundamentals``, ``options``.
+    series_ids:
+        If provided, return only rows whose ``series_id`` is in this list.
+        Applies to ``macro``.
+    columns:
+        If provided, return only these columns (passed to ``read_parquet``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Empty DataFrame if the table does not exist yet.
+    """
+    if table_name not in TABLE_SCHEMAS:
+        raise ValueError(
+            f"Unknown table '{table_name}'. Valid names: {sorted(TABLE_SCHEMAS)}"
+        )
+
+    table_dir = data_dir / table_name
+    if not table_dir.exists():
+        return pd.DataFrame()
+
+    partition_cols = PARTITION_COLS[table_name]
+
+    if not partition_cols:
+        path = table_dir / "data.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        df = pd.read_parquet(path, columns=columns)
+    else:
+        files = _get_partition_files(table_dir, start_date, end_date)
+        if not files:
+            return pd.DataFrame()
+        df = pd.concat(
+            [pd.read_parquet(f, columns=columns) for f in files],
+            ignore_index=True,
+        )
+
+    # --- in-memory row filters ---
+    df = _apply_filters(
+        df,
+        start_date=start_date,
+        end_date=end_date,
+        symbols=symbols,
+        series_ids=series_ids,
+    )
+
+    return df.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _merge_write(
+    path: Path,
+    new_df: pd.DataFrame,
+    dedup_keys: list[str],
+    sort_keys: list[str],
+) -> int:
+    """Merge *new_df* into the parquet at *path*, dedup, sort, and save atomically.
+
+    Returns the number of net new rows (after - before).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        existing = pd.read_parquet(path)
+        before = len(existing)
+        combined = pd.concat([existing, new_df], ignore_index=True)
+    else:
+        before = 0
+        combined = new_df.copy()
+
+    combined = (
+        combined
+        .drop_duplicates(subset=dedup_keys)
+        .sort_values(sort_keys)
+        .reset_index(drop=True)
+    )
+    after = len(combined)
+
+    tmp = path.with_name(path.stem + ".tmp.parquet")
+    combined.to_parquet(tmp, index=False)
+    tmp.replace(path)
+
+    return after - before
+
+
+def _get_partition_files(
+    table_dir: Path,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
+) -> list[Path]:
+    """Return the data.parquet paths for year partitions that overlap the range."""
+    start_year = start_date.year if start_date is not None else None
+    end_year = end_date.year if end_date is not None else None
+
+    files: list[Path] = []
+    for entry in sorted(table_dir.iterdir()):
+        if not entry.is_dir() or not entry.name.startswith("year="):
+            continue
+        try:
+            year = int(entry.name.split("=", 1)[1])
+        except (ValueError, IndexError):
+            continue
+
+        if start_year is not None and year < start_year:
+            continue
+        if end_year is not None and year > end_year:
+            continue
+
+        part_file = entry / "data.parquet"
+        if part_file.exists():
+            files.append(part_file)
+
+    return files
+
+
+def _apply_filters(
+    df: pd.DataFrame,
+    *,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
+    symbols: list[str] | None,
+    series_ids: list[str] | None,
+) -> pd.DataFrame:
+    """Apply in-memory row filters to *df* and return the result."""
+    if df.empty:
+        return df
+
+    if start_date is not None and "period_start_date" in df.columns:
+        df = df[
+            pd.to_datetime(df["period_start_date"]).dt.date >= start_date
+        ]
+    if end_date is not None and "period_start_date" in df.columns:
+        df = df[
+            pd.to_datetime(df["period_start_date"]).dt.date <= end_date
+        ]
+    if symbols is not None and "symbol" in df.columns:
+        df = df[df["symbol"].isin(symbols)]
+    if series_ids is not None and "series_id" in df.columns:
+        df = df[df["series_id"].isin(series_ids)]
+
+    return df
