@@ -46,14 +46,16 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
+from market_data.config import cfg as _cfg
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-FUNDAMENTALS_DIR = Path("data/fundamentals")
-SLEEP_BETWEEN_CALLS = 2  # seconds — .info is lighter than a full history pull
+FUNDAMENTALS_DIR = Path(_cfg.get("paths.fundamentals_dir", "data/fundamentals"))
+SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.fundamentals", 2)
 
 # Mapping: our column name → yfinance info key
 INFO_FIELDS: dict[str, str] = {

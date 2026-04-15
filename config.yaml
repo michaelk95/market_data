@@ -1,0 +1,97 @@
+# config.yaml — centralized configuration for the market_data pipeline
+# All paths are relative to the repository root and are resolved to absolute
+# paths at runtime by src/market_data/config.py.
+
+# ---------------------------------------------------------------------------
+# collection: data-gathering frequencies, batch sizes, and lookback windows
+# ---------------------------------------------------------------------------
+collection:
+  # Years of OHLCV history to pull when a ticker is first onboarded
+  history_years: 10
+
+  # Tickers to onboard per pipeline run (stock equities only; ETFs are
+  # priority-onboarded outside this limit)
+  batch_size: 50
+
+  # Options chain: tickers processed per run across the rolling cycle
+  options_batch_size: 50
+
+  # Options chain: nearest N expiration dates to fetch per ticker
+  options_max_expiries: 4
+
+  # Days between full ticker-list refreshes (iShares holdings re-download)
+  ticker_refresh_days: 90
+
+  # Days between fundamentals snapshots (monthly cadence)
+  fundamentals_refresh_days: 30
+
+  # Earliest date for bootstrapping FRED macro series
+  macro_start: "1990-01-01"
+
+# ---------------------------------------------------------------------------
+# macro: FRED series to collect by default, with human-readable descriptions
+# ---------------------------------------------------------------------------
+macro:
+  series:
+    # Daily
+    DFF:      "Effective Federal Funds Rate"
+    T10Y2Y:   "10yr minus 2yr Treasury yield spread"
+    # Monthly
+    CPIAUCSL: "CPI All Urban Consumers (headline)"
+    CPILFESL: "Core CPI (ex food & energy)"
+    PCEPI:    "PCE Price Index"
+    PCEPILFE: "Core PCE"
+    UNRATE:   "Unemployment Rate"
+    PAYEMS:   "Nonfarm Payrolls (thousands of jobs)"
+    # Quarterly
+    GDPC1:    "Real GDP (chained 2017 dollars)"
+    GDP:      "Nominal GDP"
+
+# ---------------------------------------------------------------------------
+# indices: market index and rate symbols fetched by fetch_indices.py
+# ---------------------------------------------------------------------------
+indices:
+  symbols:
+    - "^VIX"   # CBOE Volatility Index
+    - "^TNX"   # 10-year Treasury yield
+    - "^TYX"   # 30-year Treasury yield
+    - "^FVX"   # 5-year Treasury yield
+    - "^IRX"   # 13-week T-bill yield
+    - "ZQ=F"   # 30-day Fed Funds Futures (front month)
+    - "^GSPC"  # S&P 500 index level
+
+# ---------------------------------------------------------------------------
+# paths: data and log directories, relative to repo root
+# ---------------------------------------------------------------------------
+paths:
+  data_dir:          "data"
+  ohlcv_dir:         "data/ohlcv"
+  options_dir:       "data/options"
+  fundamentals_dir:  "data/fundamentals"
+  macro_dir:         "data/macro"
+  indices_dir:       "data/indices"
+  logs_dir:          "logs"
+  state_file:        "state.json"
+  tickers_file:      "tickers.csv"
+  metrics_file:      "logs/metrics.json"
+
+# ---------------------------------------------------------------------------
+# sources: yfinance and other data-source settings
+# ---------------------------------------------------------------------------
+sources:
+  # Seconds to sleep between successive yfinance API calls — be polite
+  sleep_between_calls:
+    ohlcv:         5
+    options:       5
+    fundamentals:  2
+    indices:       3
+
+# ---------------------------------------------------------------------------
+# health: maximum acceptable age (days) for each data type
+# ---------------------------------------------------------------------------
+health:
+  freshness_days:
+    ohlcv:         2   # daily equity prices
+    options:       14  # options cycle covers ~500 tickers over ~10 days
+    fundamentals:  35  # monthly snapshot run
+    macro:         7   # FRED data; some series are monthly

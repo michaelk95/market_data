@@ -31,6 +31,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from market_data.config import cfg as _cfg
+
 logger = logging.getLogger(__name__)
 
 # Subdirectory names under the data root, keyed by data-type label
@@ -42,14 +44,17 @@ _SUBDIR_NAMES: dict[str, str] = {
 }
 
 # Maximum acceptable age (days) for the most recently modified file
-FRESHNESS_WINDOWS: dict[str, int] = {
-    "ohlcv": 2,
-    "options": 14,
-    "fundamentals": 35,
-    "macro": 7,
-}
+FRESHNESS_WINDOWS: dict[str, int] = _cfg.get(
+    "health.freshness_days",
+    {
+        "ohlcv": 2,
+        "options": 14,
+        "fundamentals": 35,
+        "macro": 7,
+    },
+)
 
-_DEFAULT_DATA_DIR = Path("data")
+_DEFAULT_DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 
 
 def health_check(data_dir: Path | None = None) -> dict[str, dict]:

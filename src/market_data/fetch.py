@@ -20,11 +20,13 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
+from market_data.config import cfg as _cfg
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_HISTORY_YEARS = 10
+DEFAULT_HISTORY_YEARS: int = _cfg.get("collection.history_years", 10)
 OHLCV_COLS = ["date", "symbol", "open", "high", "low", "close", "volume"]
 
 

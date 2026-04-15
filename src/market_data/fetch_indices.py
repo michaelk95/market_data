@@ -29,6 +29,7 @@ import time
 from datetime import date
 from pathlib import Path
 
+from market_data.config import cfg as _cfg
 from market_data.fetch import (
     DEFAULT_HISTORY_YEARS,
     fetch_history,
@@ -43,18 +44,21 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-INDEX_SYMBOLS: list[str] = [
-    "^VIX",   # CBOE Volatility Index
-    "^TNX",   # 10-year Treasury yield
-    "^TYX",   # 30-year Treasury yield
-    "^FVX",   # 5-year Treasury yield
-    "^IRX",   # 13-week T-bill yield
-    "ZQ=F",   # 30-day Fed Funds Futures (front month)
-    "^GSPC",  # S&P 500 index level
-]
+INDEX_SYMBOLS: list[str] = _cfg.get(
+    "indices.symbols",
+    [
+        "^VIX",   # CBOE Volatility Index
+        "^TNX",   # 10-year Treasury yield
+        "^TYX",   # 30-year Treasury yield
+        "^FVX",   # 5-year Treasury yield
+        "^IRX",   # 13-week T-bill yield
+        "ZQ=F",   # 30-day Fed Funds Futures (front month)
+        "^GSPC",  # S&P 500 index level
+    ],
+)
 
-INDICES_DIR = Path("data/indices")
-SLEEP_BETWEEN_CALLS = 3  # seconds
+INDICES_DIR = Path(_cfg.get("paths.indices_dir", "data/indices"))
+SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.indices", 3)
 
 
 # ---------------------------------------------------------------------------

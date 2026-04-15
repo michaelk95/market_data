@@ -51,6 +51,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from market_data.config import cfg as _cfg
 from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
 from market_data import metrics
 
@@ -60,16 +61,16 @@ logger = logging.getLogger(__name__)
 # Paths & defaults
 # ---------------------------------------------------------------------------
 
-STATE_FILE = Path("state.json")
-TICKERS_FILE = Path("tickers.csv")
-DATA_DIR = Path("data/ohlcv")
+STATE_FILE = Path(_cfg.get("paths.state_file", "state.json"))
+TICKERS_FILE = Path(_cfg.get("paths.tickers_file", "tickers.csv"))
+DATA_DIR = Path(_cfg.get("paths.ohlcv_dir", "data/ohlcv"))
 
-DEFAULT_BATCH_SIZE = 50
-SLEEP_BETWEEN_CALLS = 5  # seconds; be polite to the yfinance endpoint
-TICKER_REFRESH_DAYS = 90
-FUNDAMENTALS_REFRESH_DAYS = 30
-DEFAULT_OPTIONS_BATCH_SIZE = 50
-DEFAULT_MAX_EXPIRIES = 4
+DEFAULT_BATCH_SIZE: int = _cfg.get("collection.batch_size", 50)
+SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.ohlcv", 5)
+TICKER_REFRESH_DAYS: int = _cfg.get("collection.ticker_refresh_days", 90)
+FUNDAMENTALS_REFRESH_DAYS: int = _cfg.get("collection.fundamentals_refresh_days", 30)
+DEFAULT_OPTIONS_BATCH_SIZE: int = _cfg.get("collection.options_batch_size", 50)
+DEFAULT_MAX_EXPIRIES: int = _cfg.get("collection.options_max_expiries", 4)
 
 
 # ---------------------------------------------------------------------------
