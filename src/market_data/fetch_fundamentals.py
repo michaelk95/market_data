@@ -47,6 +47,7 @@ import pandas as pd
 import yfinance as yf
 
 from market_data.config import cfg as _cfg
+from market_data.resilience import yf_retry
 
 logger = logging.getLogger(__name__)
 
@@ -136,17 +137,23 @@ def save_fundamentals(symbol: str, record: dict, fund_dir: Path) -> int:
 # Fetch
 # ---------------------------------------------------------------------------
 
+@yf_retry
+def _fetch_ticker_info(symbol: str) -> dict:
+    """Fetch raw yfinance .info dict for *symbol*. Raises on network failure."""
+    return yf.Ticker(symbol).info
+
+
 def fetch_fundamentals(symbol: str) -> dict | None:
     """
     Pull the fundamentals snapshot for `symbol` via yfinance .info.
 
     Returns a dict ready to pass to save_fundamentals(), or None if the ticker
-    returned no usable data.
+    returned no usable data (e.g. ETF, delisted, or no market cap reported).
+
+    Raises on transient network errors after retries are exhausted, so the
+    caller can distinguish a temporary outage from a permanently absent ticker.
     """
-    try:
-        info = yf.Ticker(symbol).info
-    except Exception:
-        return None
+    info = _fetch_ticker_info(symbol)
 
     # Require at least a market cap to consider the record valid
     if not info.get("marketCap"):

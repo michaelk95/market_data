@@ -54,6 +54,7 @@ import pandas as pd
 from market_data.config import cfg as _cfg
 from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
 from market_data import metrics
+from market_data import resilience
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ def load_state() -> dict:
             "last_ticker_refresh": raw.get("last_ticker_refresh"),
             "last_fundamentals_run": raw.get("last_fundamentals_run"),
             "options_cycle": raw.get("options_cycle", []),
+            "fetch_failures": raw.get("fetch_failures", {}),
         }
     return {
         "onboarded": [],
@@ -93,6 +95,7 @@ def load_state() -> dict:
         "last_ticker_refresh": None,
         "last_fundamentals_run": None,
         "options_cycle": [],
+        "fetch_failures": {},
     }
 
 
@@ -293,6 +296,7 @@ def step_onboard(
     pending: list[str],
     batch_size: int,
     onboarded: set[str],
+    state: dict,
 ) -> tuple[set[str], set[str]]:
     """
     Fetch full history for the next `batch_size` pending tickers.
@@ -323,14 +327,17 @@ def step_onboard(
             if df.empty:
                 logger.info("%s  no data (skipping)", prefix)
                 metrics.record_symbol_result(symbol, success=False, reason="no data")
+                resilience.record_failure(state, symbol, "no data")
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
                 newly_onboarded.add(symbol)
+                resilience.clear_failure(state, symbol)
                 logger.info("%s  %d rows saved", prefix, added)
                 metrics.record_symbol_result(symbol, success=True, rows_written=added)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             failed.add(symbol)
+            resilience.record_failure(state, symbol, str(exc))
             metrics.record_symbol_result(symbol, success=False, reason=str(exc))
 
         time.sleep(SLEEP_BETWEEN_CALLS)
@@ -350,6 +357,7 @@ def step_onboard(
 def step_update(
     to_update: list[str],
     since: date,
+    state: dict,
 ) -> dict[str, int]:
     """
     Fetch incremental data for all `to_update` tickers since `since`.
@@ -379,9 +387,11 @@ def step_update(
                 results[symbol] = added
                 total_rows += added
                 metrics.record_symbol_result(symbol, success=True, rows_written=added)
+            resilience.clear_failure(state, symbol)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             results[symbol] = 0
+            resilience.record_failure(state, symbol, str(exc))
             metrics.record_symbol_result(symbol, success=False, reason=str(exc))
 
         time.sleep(SLEEP_BETWEEN_CALLS)
@@ -433,23 +443,36 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     )
     logger.info("Last ticker refresh: %s", state.get("last_ticker_refresh") or "never")
 
+    # --- Report quarantined tickers up front ---
+    quarantined = resilience.quarantined_symbols(state)
+    if quarantined:
+        logger.warning(
+            "Quarantined tickers (%d) — skipping until failures are resolved: %s",
+            len(quarantined),
+            ", ".join(quarantined[:20]) + (" …" if len(quarantined) > 20 else ""),
+        )
+
     # --- 1a. Priority-onboard ETFs (outside the normal batch limit) ---
     # ETFs sit at the bottom of tickers.csv (NaN market_value sorts last) so
     # without this pre-pass they would wait until all ~1,500 stock tickers are
     # onboarded.  There are at most 19 ETFs, so this adds <2 minutes once.
     from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
-    etf_pending = [t for t in ALL_ETFS if t not in onboarded and t in set(all_tickers)]
+    quarantined_set = set(quarantined)
+    etf_pending = [
+        t for t in ALL_ETFS
+        if t not in onboarded and t in set(all_tickers) and t not in quarantined_set
+    ]
     etf_newly_onboarded: set[str] = set()
     if etf_pending:
         logger.info("ETFs pending onboarding: %s", etf_pending)
         etf_newly_onboarded, _ = step_onboard(
-            etf_pending, batch_size=len(etf_pending), onboarded=onboarded
+            etf_pending, batch_size=len(etf_pending), onboarded=onboarded, state=state
         )
         onboarded |= etf_newly_onboarded
 
     # --- 1b. Onboard new stock tickers (batch-limited, ETFs excluded) ---
-    non_etf_pending = [t for t in pending if t not in set(ALL_ETFS)]
-    newly_onboarded, _failed = step_onboard(non_etf_pending, batch_size, onboarded)
+    non_etf_pending = [t for t in pending if t not in set(ALL_ETFS) and t not in quarantined_set]
+    newly_onboarded, _failed = step_onboard(non_etf_pending, batch_size, onboarded, state=state)
     onboarded |= newly_onboarded
 
     all_newly_onboarded = etf_newly_onboarded | newly_onboarded
@@ -458,8 +481,11 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     if not skip_update and last_run:
         # Update tickers that were already onboarded before this run
         # (newly onboarded ones just got full history; no need to update them)
-        to_update = [t for t in all_tickers if t in onboarded and t not in all_newly_onboarded]
-        step_update(to_update, since=last_run)
+        to_update = [
+            t for t in all_tickers
+            if t in onboarded and t not in all_newly_onboarded and t not in quarantined_set
+        ]
+        step_update(to_update, since=last_run, state=state)
     elif not skip_update and not last_run:
         logger.info("UPDATE   skipped — no previous run date in state.json")
 
@@ -498,16 +524,25 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
         state["last_fundamentals_run"] = str(today)
     if updated_options_cycle is not None:
         state["options_cycle"] = sorted(updated_options_cycle)
+    # fetch_failures was updated in-place by step_onboard / step_update
     save_state(state)
 
     # --- 8. Summary ---
     remaining = len([t for t in all_tickers if t not in onboarded])
+    final_quarantined = resilience.quarantined_symbols(state)
     logger.info(
-        "Done.  Onboarded: %d/%d  |  Remaining: %d",
+        "Done.  Onboarded: %d/%d  |  Remaining: %d  |  Quarantined: %d",
         len(onboarded),
         len(all_tickers),
         remaining,
+        len(final_quarantined),
     )
+    if final_quarantined:
+        logger.warning(
+            "Quarantined (%d) — run with --show-failures for details: %s",
+            len(final_quarantined),
+            ", ".join(final_quarantined[:10]) + (" …" if len(final_quarantined) > 10 else ""),
+        )
     if remaining > 0 and batch_size > 0:
         eta = (remaining + batch_size - 1) // batch_size
         logger.info(

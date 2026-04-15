@@ -23,6 +23,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from market_data.resilience import requests_retry
+
 logger = logging.getLogger(__name__)
 
 # iShares ETF holdings CSV endpoints (no auth required)
@@ -61,6 +63,7 @@ HEADERS = {
 }
 
 
+@requests_retry
 def fetch_etf_holdings(url: str) -> pd.DataFrame:
     """Download an iShares ETF holdings CSV and return the raw DataFrame."""
     logger.info("Downloading ETF holdings from %s...", url[:60])
