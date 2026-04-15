@@ -51,7 +51,6 @@ from pathlib import Path
 
 import pandas as pd
 
-import market_data.metrics as metrics
 from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
 
 logger = logging.getLogger(__name__)
@@ -312,18 +311,13 @@ def step_onboard(
             df = fetch_history(symbol, years=DEFAULT_HISTORY_YEARS)
             if df.empty:
                 logger.info("%s  no data (skipping)", prefix)
-                metrics.record_symbol_result("ohlcv", symbol, success=False,
-                                             failure_reason="no data")
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
                 newly_onboarded.add(symbol)
                 logger.info("%s  %d rows saved", prefix, added)
-                metrics.record_symbol_result("ohlcv", symbol, success=True, rows=added)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             failed.add(symbol)
-            metrics.record_symbol_result("ohlcv", symbol, success=False,
-                                         failure_reason=str(exc))
 
         time.sleep(SLEEP_BETWEEN_CALLS)
 
@@ -361,18 +355,14 @@ def step_update(
             if df.empty:
                 logger.info("%s  up to date", prefix)
                 results[symbol] = 0
-                metrics.record_symbol_result("ohlcv", symbol, success=True, rows=0)
             else:
                 added = save_ticker_data(symbol, df, DATA_DIR)
                 logger.info("%s  +%d rows", prefix, added)
                 results[symbol] = added
                 total_rows += added
-                metrics.record_symbol_result("ohlcv", symbol, success=True, rows=added)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
             results[symbol] = 0
-            metrics.record_symbol_result("ohlcv", symbol, success=False,
-                                         failure_reason=str(exc))
 
         time.sleep(SLEEP_BETWEEN_CALLS)
 
@@ -398,8 +388,6 @@ def step_update(
 
 def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool = False, run_macro: bool = False, run_fundamentals: bool = False, run_options: bool = False, options_batch_size: int = 50) -> None:
     today = date.today()
-
-    metrics.start_run()
 
     state = load_state()
     onboarded: set[str] = set(state["onboarded"])
@@ -499,8 +487,6 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
         logger.info(
             "At %d tickers/day  →  ~%d more day(s) to full coverage", batch_size, eta
         )
-
-    metrics.finish_run()
 
     # --- 9. Optional merge ---
     if run_merge:
