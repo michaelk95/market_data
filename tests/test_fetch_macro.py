@@ -2,12 +2,21 @@
 from __future__ import annotations
 
 import datetime
+import logging
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from market_data.fetch_macro import DEFAULT_START, fetch_series_vintages, update_series
+from market_data.fetch_macro import (
+    DEFAULT_START,
+    SERIES_LOOKBACK_DAYS,
+    _DEFAULT_LOOKBACK_DAYS,
+    _detect_revisions,
+    fetch_series_vintages,
+    update_series,
+)
 from market_data.schema import DataSource, ReportTimeMarker
+from market_data.storage import write_table
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +55,23 @@ def _make_fred_mock(df: pd.DataFrame) -> MagicMock:
     fred = MagicMock()
     fred.get_series_all_releases.return_value = df
     return fred
+
+
+def _seed_row(series_id: str, period: datetime.date, report_date: datetime.date) -> dict:
+    """Return a minimal valid macro row dict for seeding storage."""
+    return {
+        "series_id": series_id,
+        "value": 19.1,
+        "valid_to_date": datetime.date(9999, 12, 31),
+        "revision_rank": 1,
+        "release_name": None,
+        "period_start_date": period,
+        "period_end_date": period,
+        "report_date": report_date,
+        "report_time_marker": ReportTimeMarker.POST_MARKET,
+        "source": DataSource.FRED,
+        "collected_at": pd.Timestamp("2024-01-01", tz="UTC"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +140,31 @@ class TestFetchSeriesVintages:
         assert result.empty
         assert "series_id" in result.columns
 
+    def test_revision_rank_column_present(self):
+        result = self._call()
+        assert "revision_rank" in result.columns
+
+    def test_revision_rank_values(self):
+        """Q4 2019 appears twice → ranks 1,2; Q3 2019 once → rank 1."""
+        result = self._call()
+        q4 = result[result["period_start_date"] == datetime.date(2019, 10, 1)].sort_values("report_date")
+        assert list(q4["revision_rank"]) == [1, 2]
+        q3 = result[result["period_start_date"] == datetime.date(2019, 7, 1)]
+        assert list(q3["revision_rank"]) == [1]
+
+    def test_release_name_column_present(self):
+        result = self._call()
+        assert "release_name" in result.columns
+
+    def test_release_name_populated_for_known_series(self):
+        result = self._call()
+        assert (result["release_name"] == "Gross Domestic Product").all()
+
+    def test_release_name_none_for_unknown_series(self):
+        with patch("fredapi.Fred", return_value=_make_fred_mock(_VINTAGE_DF)):
+            result = fetch_series_vintages("CUSTOM_XYZ", realtime_start="2020-01-01", api_key="test")
+        assert result["release_name"].isna().all()
+
 
 # ---------------------------------------------------------------------------
 # TestUpdateSeries
@@ -138,20 +189,26 @@ class TestUpdateSeries:
         assert result == 0
 
     def test_incremental_uses_latest_report_date_minus_7_days(self, tmp_path):
-        """Subsequent run keys off max(report_date) − 7 days."""
-        from market_data.storage import write_table
+        """Subsequent run for a non-GDP series keys off max(report_date) − 7 days."""
+        seed = pd.DataFrame([_seed_row("DFF", datetime.date(2020, 1, 1), datetime.date(2020, 3, 26))])
+        write_table(seed, "macro", tmp_path)
 
-        seed = pd.DataFrame([{
-            "series_id": "GDPC1",
-            "value": 19.1,
-            "valid_to_date": datetime.date(9999, 12, 31),
-            "period_start_date": datetime.date(2020, 1, 1),
-            "period_end_date": datetime.date(2020, 1, 1),
-            "report_date": datetime.date(2020, 3, 26),
-            "report_time_marker": ReportTimeMarker.POST_MARKET,
-            "source": DataSource.FRED,
-            "collected_at": pd.Timestamp("2020-03-26", tz="UTC"),
-        }])
+        captured: dict = {}
+
+        def fake_fetch(series_id, realtime_start, api_key):
+            captured["realtime_start"] = realtime_start
+            return pd.DataFrame()
+
+        with patch("market_data.fetch_macro.fetch_series_vintages", side_effect=fake_fetch):
+            update_series("DFF", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+
+        expected = str(datetime.date(2020, 3, 26) - datetime.timedelta(days=7))
+        assert captured["realtime_start"] == expected
+
+    def test_gdpc1_uses_400_day_lookback(self, tmp_path):
+        """GDPC1 uses a 400-day window to catch annual benchmark revisions."""
+        report_date = datetime.date(2024, 7, 1)
+        seed = pd.DataFrame([_seed_row("GDPC1", datetime.date(2024, 1, 1), report_date)])
         write_table(seed, "macro", tmp_path)
 
         captured: dict = {}
@@ -163,7 +220,26 @@ class TestUpdateSeries:
         with patch("market_data.fetch_macro.fetch_series_vintages", side_effect=fake_fetch):
             update_series("GDPC1", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
 
-        expected = str(datetime.date(2020, 3, 26) - datetime.timedelta(days=7))
+        expected_days = SERIES_LOOKBACK_DAYS["GDPC1"]
+        expected = str(report_date - datetime.timedelta(days=expected_days))
+        assert captured["realtime_start"] == expected
+
+    def test_default_series_uses_7_day_lookback(self, tmp_path):
+        """Series not in SERIES_LOOKBACK_DAYS fall back to _DEFAULT_LOOKBACK_DAYS."""
+        report_date = datetime.date(2024, 7, 1)
+        seed = pd.DataFrame([_seed_row("CPIAUCSL", datetime.date(2024, 6, 1), report_date)])
+        write_table(seed, "macro", tmp_path)
+
+        captured: dict = {}
+
+        def fake_fetch(series_id, realtime_start, api_key):
+            captured["realtime_start"] = realtime_start
+            return pd.DataFrame()
+
+        with patch("market_data.fetch_macro.fetch_series_vintages", side_effect=fake_fetch):
+            update_series("CPIAUCSL", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+
+        expected = str(report_date - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS))
         assert captured["realtime_start"] == expected
 
     def test_returns_zero_on_empty_response(self, tmp_path):
@@ -173,17 +249,7 @@ class TestUpdateSeries:
 
     def test_idempotent(self, tmp_path):
         """Writing the same data twice returns 0 on the second call."""
-        row = pd.DataFrame([{
-            "series_id": "DFF",
-            "value": 5.33,
-            "valid_to_date": datetime.date(9999, 12, 31),
-            "period_start_date": datetime.date(2024, 1, 2),
-            "period_end_date": datetime.date(2024, 1, 2),
-            "report_date": datetime.date(2024, 1, 2),
-            "report_time_marker": ReportTimeMarker.POST_MARKET,
-            "source": DataSource.FRED,
-            "collected_at": pd.Timestamp("2024-01-02", tz="UTC"),
-        }])
+        row = pd.DataFrame([_seed_row("DFF", datetime.date(2024, 1, 2), datetime.date(2024, 1, 2))])
 
         def fake_fetch(series_id, realtime_start, api_key):
             return row.copy()
@@ -194,3 +260,82 @@ class TestUpdateSeries:
 
         assert first == 1
         assert second == 0
+
+    def test_revision_detected_logging(self, tmp_path, caplog):
+        """A new vintage for an already-known observation period is logged as a revision."""
+        period = datetime.date(2019, 10, 1)
+        first_vintage = pd.DataFrame([_seed_row("GDPC1", period, datetime.date(2020, 1, 30))])
+        write_table(first_vintage, "macro", tmp_path)
+
+        second_vintage = pd.DataFrame([{
+            **_seed_row("GDPC1", period, datetime.date(2020, 3, 26)),
+            "value": 19.2,
+            "valid_to_date": datetime.date(9999, 12, 31),
+            "revision_rank": 2,
+        }])
+
+        with caplog.at_level(logging.INFO, logger="market_data.fetch_macro"):
+            with patch(
+                "market_data.fetch_macro.fetch_series_vintages",
+                return_value=second_vintage,
+            ):
+                update_series("GDPC1", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+
+        revision_logs = [r for r in caplog.records if "Revision detected" in r.message]
+        assert len(revision_logs) >= 1
+        assert "GDPC1" in revision_logs[0].message
+
+    def test_revision_rank_recomputed_after_incremental(self, tmp_path):
+        """After an incremental write adds a new vintage, stored ranks are corrected."""
+        period = datetime.date(2019, 10, 1)
+        first = pd.DataFrame([_seed_row("GDPC1", period, datetime.date(2020, 1, 30))])
+        write_table(first, "macro", tmp_path)
+
+        second = pd.DataFrame([{
+            **_seed_row("GDPC1", period, datetime.date(2020, 3, 26)),
+            "revision_rank": 99,  # deliberately wrong — should be fixed by recompute
+        }])
+
+        with patch("market_data.fetch_macro.fetch_series_vintages", return_value=second):
+            update_series("GDPC1", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+
+        stored = pd.read_parquet(tmp_path / "macro" / "data.parquet")
+        stored = stored[stored["series_id"] == "GDPC1"].sort_values("report_date")
+        assert list(stored["revision_rank"]) == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# TestDetectRevisions
+# ---------------------------------------------------------------------------
+
+
+class TestDetectRevisions:
+    """Unit tests for _detect_revisions()."""
+
+    def _make_df(self, period, report_date, value=19.0) -> pd.DataFrame:
+        return pd.DataFrame([_seed_row("GDPC1", period, report_date)])
+
+    def test_returns_zero_when_existing_empty(self):
+        new_df = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 1, 30))
+        assert _detect_revisions("GDPC1", pd.DataFrame(), new_df) == 0
+
+    def test_returns_zero_when_new_empty(self):
+        existing = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 1, 30))
+        assert _detect_revisions("GDPC1", existing, pd.DataFrame()) == 0
+
+    def test_detects_new_vintage_for_known_period(self):
+        existing = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 1, 30))
+        new_df = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 3, 26))
+        assert _detect_revisions("GDPC1", existing, new_df) == 1
+
+    def test_ignores_new_periods(self):
+        """A brand-new observation period is not a revision."""
+        existing = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 1, 30))
+        new_df = self._make_df(datetime.date(2020, 1, 1), datetime.date(2020, 4, 29))
+        assert _detect_revisions("GDPC1", existing, new_df) == 0
+
+    def test_ignores_already_known_vintage(self):
+        """Re-fetching an already-stored (period, report_date) pair is not a revision."""
+        existing = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 1, 30))
+        new_df = self._make_df(datetime.date(2019, 10, 1), datetime.date(2020, 1, 30))
+        assert _detect_revisions("GDPC1", existing, new_df) == 0
