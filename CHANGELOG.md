@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.5.3] — 2026-04-15 ([#41](https://github.com/michaelk95/market_data/pull/41))
+## [0.5.4] — 2026-04-15 ([#41](https://github.com/michaelk95/market_data/pull/41))
 
 ### Added
 - `migrate_macro.py` — one-shot CLI (`market-data-migrate-macro`) to re-pull full
@@ -25,6 +25,17 @@ All notable changes to this project will be documented here.
 ### Migration
   Run `market-data-migrate-macro [--backup]` once to replace
   `data/macro/<SERIES_ID>.parquet` files with the bitemporal layout.
+---
+## [0.5.3] — 2026-04-15 ([#50](https://github.com/michaelk95/market_data/pull/50))
+
+### Fixed
+- `read_table` now returns an empty DataFrame with correct schema columns (instead of
+  a bare `pd.DataFrame()` with zero columns) on all no-data paths, preventing
+  `KeyError` when callers access specific columns on the result.
+- `read_table` emits a `WARNING` log when a partitioned table directory contains flat
+  `.parquet` files but no `year=YYYY` partitions, signalling that the migration script
+  has not been run.
+
 
 ---
 

@@ -29,6 +29,7 @@ read_table(table_name, data_dir, *, start_date, end_date,
 from __future__ import annotations
 
 import datetime
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -40,6 +41,8 @@ from .schema import (
     TABLE_SCHEMAS,
     validate_bitemporal_columns,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["write_table", "read_table"]
 
@@ -147,19 +150,29 @@ def read_table(
 
     table_dir = data_dir / table_name
     if not table_dir.exists():
-        return pd.DataFrame()
+        return _empty_df(table_name, columns)
 
     partition_cols = PARTITION_COLS[table_name]
 
     if not partition_cols:
         path = table_dir / "data.parquet"
         if not path.exists():
-            return pd.DataFrame()
+            return _empty_df(table_name, columns)
         df = pd.read_parquet(path, columns=columns)
     else:
         files = _get_partition_files(table_dir, start_date, end_date)
         if not files:
-            return pd.DataFrame()
+            # Warn if flat (old-format) files exist but no year=* partitions — a
+            # likely sign that market-data-migrate-fundamentals hasn't been run.
+            flat_files = [p for p in table_dir.iterdir() if p.suffix == ".parquet" and p.is_file()]
+            if flat_files:
+                logger.warning(
+                    "read_table('%s'): directory %s contains %d flat .parquet file(s) "
+                    "but no year=YYYY partitions. Run the migration script to convert "
+                    "old-format files to the bitemporal layout.",
+                    table_name, table_dir, len(flat_files),
+                )
+            return _empty_df(table_name, columns)
         df = pd.concat(
             [pd.read_parquet(f, columns=columns) for f in files],
             ignore_index=True,
@@ -180,6 +193,15 @@ def read_table(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _empty_df(table_name: str, columns: list[str] | None) -> pd.DataFrame:
+    """Return an empty DataFrame whose columns match the table schema (or the
+    requested *columns* projection).  This avoids KeyError when callers do
+    ``df[["col1", "col2"]]`` on a no-data result."""
+    schema_cols = TABLE_SCHEMAS[table_name].names
+    cols = columns if columns is not None else schema_cols
+    return pd.DataFrame(columns=cols)
 
 
 def _merge_write(
