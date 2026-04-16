@@ -4,6 +4,30 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.5.3] — 2026-04-15 ([#41](https://github.com/michaelk95/market_data/pull/41))
+
+### Added
+- `migrate_macro.py` — one-shot CLI (`market-data-migrate-macro`) to re-pull full
+  FRED vintage history and write into `data/macro/data.parquet`. Flags: `--series`,
+  `--start`, `--backup`, `--dry-run`.
+
+### Changed
+- `schema.py`: `MACRO_SCHEMA` gains a `valid_to_date` field (`FRED realtime_end`;
+  `9999-12-31` marks currently-active vintages). `DEDUP_KEYS["macro"]` widened to
+  `["series_id", "period_start_date", "report_date"]` to support multiple vintages
+  per observation.
+- `fetch_macro.py`: switched to `get_series_all_releases()` (FRED realtime API).
+  Each row now carries `report_date = realtime_start` (vintage date) and
+  `valid_to_date = realtime_end`. Incremental updates key off
+  `max(report_date) − 7d`. Per-series Parquet helpers removed; all writes go
+  through `storage.write_table()`.
+
+### Migration
+  Run `market-data-migrate-macro [--backup]` once to replace
+  `data/macro/<SERIES_ID>.parquet` files with the bitemporal layout.
+
+---
+
 ## [0.5.2] — 2026-04-16 ([#46](https://github.com/michaelk95/market_data/pull/46))
 
 ### Added
