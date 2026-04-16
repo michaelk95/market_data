@@ -6,34 +6,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `market_data` is a Python package that collects and stores financial market data (OHLCV, indices, macro, fundamentals, options) for a `paper_trading` backtest engine.
 
+## Environment setup
+
+Each worktree (and the main repo) needs its own `.venv`. `python` and `pip` alone will not resolve correctly — always use the relative `.venv/Scripts/` path.
+
+**First-time setup in a new worktree** (bootstrap using the main venv's Python):
+
+```bash
+/d/market_data/.venv/Scripts/python.exe -m venv .venv
+.venv/Scripts/pip.exe install -e ".[dev]"
+```
+
+The main repo already has `.venv/` — no bootstrap needed there.
+
 ## Commands
 
 ```bash
 # Install (registers CLI commands)
-pip install -e ".[dev]"
+.venv/Scripts/pip.exe install -e ".[dev]"
 
 # Run tests
-python -m pytest
+.venv/Scripts/python.exe -m pytest
 
 # Run a single test file or function
-python -m pytest tests/test_fetch.py -v
-python -m pytest tests/test_orchestrator.py::test_step_onboard -v
+.venv/Scripts/python.exe -m pytest tests/test_fetch.py -v
+.venv/Scripts/python.exe -m pytest tests/test_orchestrator.py::test_step_onboard -v
 
 # Lint / autofix
-ruff check src/ tests/
-ruff check --fix src/ tests/
+.venv/Scripts/ruff.exe check src/ tests/
+.venv/Scripts/ruff.exe check --fix src/ tests/
 
 # Full daily pipeline
-market-data-run --indices --macro --fundamentals --options --merge
+.venv/Scripts/market-data-run.exe --indices --macro --fundamentals --options --merge
 
 # Other CLI commands
-market-data-fetch-tickers       # refresh tickers.csv from iShares ETF holdings
-market-data-merge               # merge data/ohlcv/*.parquet → data/merged.parquet
-market-data-fetch-indices       # update VIX, Treasury yields, Fed Funds futures
-market-data-fetch-macro         # update FRED series
-market-data-fetch-fundamentals  # snapshot fundamentals for all onboarded tickers
-market-data-fetch-options       # next batch of options chain snapshots
-market-data-health              # check data freshness by subdirectory
+.venv/Scripts/market-data-fetch-tickers.exe       # refresh tickers.csv from iShares ETF holdings
+.venv/Scripts/market-data-merge.exe               # merge data/ohlcv/*.parquet → data/merged.parquet
+.venv/Scripts/market-data-fetch-indices.exe       # update VIX, Treasury yields, Fed Funds futures
+.venv/Scripts/market-data-fetch-macro.exe         # update FRED series
+.venv/Scripts/market-data-fetch-fundamentals.exe  # snapshot fundamentals for all onboarded tickers
+.venv/Scripts/market-data-fetch-options.exe       # next batch of options chain snapshots
+.venv/Scripts/market-data-health.exe              # check data freshness by subdirectory
 ```
 
 `pytest` is configured in `pyproject.toml` to always run with coverage. Requires `FRED_API_KEY` in `.env`. yfinance needs no API key.
