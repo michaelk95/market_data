@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.5.3] — 2026-04-15 ([#PR](https://github.com/michaelk95/market_data/pull/NEW))
+## [0.5.3] — 2026-04-15 ([#50](https://github.com/michaelk95/market_data/pull/50))
 
 ### Fixed
 - `read_table` now returns an empty DataFrame with correct schema columns (instead of
