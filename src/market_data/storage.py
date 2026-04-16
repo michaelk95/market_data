@@ -44,7 +44,7 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["write_table", "read_table"]
+__all__ = ["write_table", "read_table", "read_macro_as_of", "read_macro_revisions"]
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -188,6 +188,106 @@ def read_table(
     )
 
     return df.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Macro-specific query helpers
+# ---------------------------------------------------------------------------
+
+_FAR_FUTURE = datetime.date(9999, 12, 31)
+
+
+def read_macro_as_of(
+    series_ids: list[str],
+    as_of_date: datetime.date,
+    data_dir: Path,
+) -> pd.DataFrame:
+    """Return the vintage of each (series_id, period) that was current on *as_of_date*.
+
+    A vintage is "current" on a given date when:
+
+    - ``report_date <= as_of_date``  — it had been released by then
+    - ``valid_to_date > as_of_date`` — it had not yet been superseded
+      OR ``valid_to_date == 9999-12-31`` — it is the currently-active value
+
+    This is the primary point-in-time query for the backtest engine: given any
+    historical date, reconstruct the information set available at that moment,
+    with no look-ahead bias from subsequent data revisions.
+
+    Parameters
+    ----------
+    series_ids:
+        FRED series IDs to query (e.g. ``["GDPC1", "UNRATE"]``).
+    as_of_date:
+        The historical date to query as of.
+    data_dir:
+        Root data directory.
+
+    Returns
+    -------
+    pd.DataFrame
+        Rows from the macro table matching the point-in-time filter.
+        Empty DataFrame if no data is available.
+    """
+    df = read_table("macro", data_dir, series_ids=series_ids)
+    if df.empty:
+        return df
+
+    report_date = pd.to_datetime(df["report_date"]).dt.date
+    valid_to_date = pd.to_datetime(df["valid_to_date"]).dt.date
+
+    mask = (
+        (report_date <= as_of_date)
+        & ((valid_to_date > as_of_date) | (valid_to_date == _FAR_FUTURE))
+    )
+    return df[mask].reset_index(drop=True)
+
+
+def read_macro_revisions(
+    series_id: str,
+    period_start_date: datetime.date,
+    data_dir: Path,
+) -> pd.DataFrame:
+    """Return all vintages of a single macro observation, ordered by report_date.
+
+    Adds three computed columns to help trace the revision chain:
+
+    - ``revision_rank``     — 1-based ordinal (1 = first/advance estimate, …)
+    - ``value_change``      — absolute change from the previous vintage (NaN for first)
+    - ``value_change_pct``  — percent change from the previous vintage (NaN for first)
+
+    Parameters
+    ----------
+    series_id:
+        FRED series ID (e.g. ``"GDPC1"``).
+    period_start_date:
+        Start date of the observation period to inspect
+        (e.g. ``datetime.date(2019, 10, 1)`` for GDP Q4 2019).
+    data_dir:
+        Root data directory.
+
+    Returns
+    -------
+    pd.DataFrame
+        All vintages for the given observation, sorted by ``report_date``,
+        with ``revision_rank``, ``value_change``, ``value_change_pct`` appended.
+        Empty DataFrame if no data is found.
+    """
+    df = read_table("macro", data_dir, series_ids=[series_id])
+    if df.empty:
+        return df
+
+    obs_dates = pd.to_datetime(df["period_start_date"]).dt.date
+    df = df[obs_dates == period_start_date].copy()
+    if df.empty:
+        return df
+
+    df = df.sort_values("report_date").reset_index(drop=True)
+    df["revision_rank"] = range(1, len(df) + 1)
+    df["value_change"] = df["value"].diff()
+    df["value_change_pct"] = df["value"].pct_change() * 100
+
+    return df
 
 
 # ---------------------------------------------------------------------------

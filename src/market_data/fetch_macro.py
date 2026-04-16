@@ -9,6 +9,10 @@ the supersession date (``valid_to_date = FRED realtime_end``; ``9999-12-31``
 for the currently-active value), enabling point-in-time queries that are free
 of look-ahead bias from data revisions (e.g., GDP advance vs. final estimates).
 
+``revision_rank`` (1 = advance, 2 = second estimate, …) is stored on every row
+and kept consistent across the whole series after each incremental update via
+``_recompute_revision_ranks``.
+
 Series collected by default
 ----------------------------
 Daily
@@ -89,8 +93,32 @@ DEFAULT_SERIES: list[str] = list(
     ).keys()
 )
 
+# Incremental lookback window per series.  GDP annual revisions (released each
+# July) can silently revise observations from years prior, so quarterly GDP
+# series use a much wider window than the daily/monthly default.
+SERIES_LOOKBACK_DAYS: dict[str, int] = {
+    "GDPC1": 400,
+    "GDP":   400,
+}
+_DEFAULT_LOOKBACK_DAYS = 7
+
+# Static FRED release names for default series (best-effort; None for unknowns)
+_SERIES_RELEASE_NAMES: dict[str, str] = {
+    "GDPC1":    "Gross Domestic Product",
+    "GDP":      "Gross Domestic Product",
+    "CPIAUCSL": "Consumer Price Index for All Urban Consumers",
+    "CPILFESL": "Consumer Price Index for All Urban Consumers: All Items Less Food and Energy",
+    "PCEPI":    "Personal Income and Outlays",
+    "PCEPILFE": "Personal Income and Outlays",
+    "UNRATE":   "Employment Situation",
+    "PAYEMS":   "Employment Situation",
+    "DFF":      "H.15 Selected Interest Rates",
+    "T10Y2Y":   "H.15 Selected Interest Rates",
+}
+
 _EMPTY_COLS: list[str] = [
     "series_id", "value", "valid_to_date",
+    "revision_rank", "release_name",
     "period_start_date", "period_end_date",
     "report_date", "report_time_marker", "source", "collected_at",
 ]
@@ -140,6 +168,14 @@ def fetch_series_vintages(
     (``report_date``) and supersession date (``valid_to_date``), enabling
     point-in-time queries that are free of look-ahead bias from revisions.
 
+    Also populates:
+    - ``revision_rank``: ordinal position within the revision chain for each
+      observation period (1 = advance estimate, 2 = second, …).  The rank is
+      computed across the returned slice only; ``update_series`` recomputes it
+      across the full stored series after each write.
+    - ``release_name``: human-readable FRED release name (static mapping for
+      default series; ``None`` for others).
+
     Returns a DataFrame ready for ``storage.write_table("macro", ...)``.
     Returns an empty DataFrame (with correct columns) if no data is available.
     """
@@ -172,7 +208,111 @@ def fetch_series_vintages(
     df["collected_at"] = datetime.now(timezone.utc)
     df["value"] = df["value"].astype(float)
 
+    # revision_rank: ordinal within each (series, period) group ordered by report_date.
+    # Computed over this fetch slice; _recompute_revision_ranks corrects it later for
+    # incremental runs that only cover a lookback window.
+    df["revision_rank"] = (
+        df.sort_values("report_date")
+          .groupby("period_start_date", sort=False)
+          .cumcount()
+        + 1
+    )
+
+    df["release_name"] = _SERIES_RELEASE_NAMES.get(series_id)
+
     return df[_EMPTY_COLS].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Revision-rank maintenance
+# ---------------------------------------------------------------------------
+
+def _recompute_revision_ranks(series_id: str, data_dir: Path) -> None:
+    """Recompute ``revision_rank`` for *series_id* across the entire stored dataset.
+
+    Called after ``write_table`` to ensure ranks are correct even when
+    incremental fetches (which only cover a lookback window) add new vintages
+    to observations that already exist in storage.
+
+    Operates directly on the parquet file with an atomic tmp-rename write.
+    """
+    path = data_dir / "macro" / "data.parquet"
+    if not path.exists():
+        return
+
+    df = pd.read_parquet(path)
+    if "series_id" not in df.columns:
+        return
+
+    mask = df["series_id"] == series_id
+    if not mask.any():
+        return
+
+    series_df = df.loc[mask].copy()
+    # Sort so cumcount is assigned in chronological vintage order
+    series_df = series_df.sort_values(["period_start_date", "report_date"])
+    series_df["revision_rank"] = (
+        series_df.groupby("period_start_date", sort=False).cumcount() + 1
+    )
+    # Align by index back into the full DataFrame
+    df.loc[mask, "revision_rank"] = series_df["revision_rank"]
+
+    tmp = path.with_name("data.tmp.parquet")
+    df.to_parquet(tmp, index=False)
+    tmp.replace(path)
+
+
+# ---------------------------------------------------------------------------
+# Revision detection
+# ---------------------------------------------------------------------------
+
+def _detect_revisions(
+    series_id: str,
+    existing: pd.DataFrame,
+    new_df: pd.DataFrame,
+) -> int:
+    """Detect new vintages that revise an already-seen observation period.
+
+    Logs one INFO line per revision and returns the total count.  A "revision"
+    is a row whose ``(period_start_date, report_date)`` key is not in *existing*
+    but whose ``period_start_date`` IS — meaning the observation was already
+    released and this is a subsequent estimate.
+
+    Parameters
+    ----------
+    series_id:
+        FRED series ID (used in log messages only).
+    existing:
+        Rows already in storage for this series (may be empty).
+    new_df:
+        Rows returned from the current fetch.
+    """
+    if existing.empty or new_df.empty:
+        return 0
+
+    existing_keys = set(
+        zip(
+            pd.to_datetime(existing["period_start_date"]).dt.date,
+            pd.to_datetime(existing["report_date"]).dt.date,
+        )
+    )
+    existing_periods = set(pd.to_datetime(existing["period_start_date"]).dt.date)
+
+    count = 0
+    for _, row in new_df.iterrows():
+        period = pd.Timestamp(row["period_start_date"]).date()
+        report = pd.Timestamp(row["report_date"]).date()
+        if (period, report) not in existing_keys and period in existing_periods:
+            logger.info(
+                "[macro] Revision detected: %s period=%s new_value=%.4f (report_date=%s)",
+                series_id,
+                period,
+                float(row["value"]),
+                report,
+            )
+            count += 1
+
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +324,9 @@ def update_series(series_id: str, api_key: str, start: str, data_dir: Path) -> i
     Bootstrap or incrementally update a single FRED series with vintage data.
 
     On first run: pulls all vintages from *start* to today.
-    On subsequent runs: pulls from (max report_date - 7 days) to today,
-    catching late-released revisions.
+    On subsequent runs: pulls from (max report_date − lookback) to today.
+    The lookback window is series-specific (see ``SERIES_LOOKBACK_DAYS``);
+    quarterly GDP uses 400 days to catch annual benchmark revisions.
 
     Returns the number of new rows added.
     """
@@ -196,9 +337,10 @@ def update_series(series_id: str, api_key: str, start: str, data_dir: Path) -> i
         action = f"bootstrap from {start}"
     else:
         latest_report = pd.to_datetime(existing["report_date"]).dt.date.max()
-        lookback = latest_report - timedelta(days=7)
+        lookback_days = SERIES_LOOKBACK_DAYS.get(series_id, _DEFAULT_LOOKBACK_DAYS)
+        lookback = latest_report - timedelta(days=lookback_days)
         realtime_start = str(lookback)
-        action = f"incremental since {lookback}"
+        action = f"incremental since {lookback} ({lookback_days}d window)"
 
     df = fetch_series_vintages(series_id, realtime_start=realtime_start, api_key=api_key)
 
@@ -206,8 +348,15 @@ def update_series(series_id: str, api_key: str, start: str, data_dir: Path) -> i
         logger.info("%s  no data  (%s)", series_id, action)
         return 0
 
+    n_revisions = _detect_revisions(series_id, existing, df)
     added = write_table(df, "macro", data_dir)
-    logger.info("%s  +%d rows  (%s)", series_id, added, action)
+    if added > 0:
+        _recompute_revision_ranks(series_id, data_dir)
+
+    logger.info(
+        "%s  +%d rows  %d revisions  (%s)",
+        series_id, added, n_revisions, action,
+    )
     return added
 
 

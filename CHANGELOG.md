@@ -4,6 +4,34 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.6.0] — 2026-04-16 ([#42](https://github.com/michaelk95/market_data/pull/42))
+
+### Added
+- `storage.read_macro_as_of(series_ids, as_of_date, data_dir)` — point-in-time query
+  returning the vintage of each (series_id, period) that was current on `as_of_date`.
+  Primary primitive for look-ahead-bias-free backtest queries.
+- `storage.read_macro_revisions(series_id, period_start_date, data_dir)` — returns all
+  vintages of one observation ordered by `report_date`, with computed columns
+  `revision_rank`, `value_change`, and `value_change_pct`.
+- `fetch_macro.SERIES_LOOKBACK_DAYS` — per-series incremental lookback map.
+  GDPC1 and GDP use a 400-day window to catch annual benchmark revisions (released
+  each July); all other series keep the 7-day default.
+- `fetch_macro._detect_revisions()` — detects and logs new vintages for already-seen
+  observation periods (`[macro] Revision detected: …`).
+- `fetch_macro._recompute_revision_ranks()` — after each incremental write, recomputes
+  `revision_rank` across the full stored series so ranks are always correct.
+
+### Changed
+- `schema.py`: `MACRO_SCHEMA` gains `revision_rank` (`int32`) and `release_name`
+  (`string`, nullable). `SORT_KEYS["macro"]` now includes `report_date` so stored rows
+  are ordered by `(period_start_date, series_id, report_date)`.
+- `fetch_macro.fetch_series_vintages()`: populates `revision_rank` (ordinal within the
+  fetched slice) and `release_name` (static mapping for all default FRED series).
+- `fetch_macro.update_series()`: uses `SERIES_LOOKBACK_DAYS` for the incremental window;
+  calls `_detect_revisions` before writing and `_recompute_revision_ranks` after.
+
+---
+
 ## [0.5.4] — 2026-04-15 ([#41](https://github.com/michaelk95/market_data/pull/41))
 
 ### Added

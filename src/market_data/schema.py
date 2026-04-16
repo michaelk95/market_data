@@ -112,6 +112,8 @@ MACRO_SCHEMA = pa.schema([
     pa.field("series_id", pa.string()),
     pa.field("value", pa.float64()),
     pa.field("valid_to_date", pa.date32()),  # FRED realtime_end; 9999-12-31 = currently active
+    pa.field("revision_rank", pa.int32()),   # 1 = advance estimate, 2 = second, … (within period)
+    pa.field("release_name", pa.string()),   # FRED release name, nullable
     *_BITEMPORAL_FIELDS,
 ])
 
@@ -158,7 +160,7 @@ SORT_KEYS: dict[str, list[str]] = {
     "ohlcv": ["period_start_date", "symbol"],
     "indices": ["period_start_date", "symbol"],
     "fundamentals": ["period_start_date", "symbol"],
-    "macro": ["period_start_date", "series_id"],
+    "macro": ["period_start_date", "series_id", "report_date"],
     "options": ["period_start_date", "symbol", "expiry", "strike", "option_type"],
     "analyst_estimates": ["period_start_date", "symbol"],
 }
