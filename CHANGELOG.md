@@ -4,6 +4,18 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.5.3] — 2026-04-15 ([#PR](https://github.com/michaelk95/market_data/pull/NEW))
+
+### Fixed
+- `read_table` now returns an empty DataFrame with correct schema columns (instead of
+  a bare `pd.DataFrame()` with zero columns) on all no-data paths, preventing
+  `KeyError` when callers access specific columns on the result.
+- `read_table` emits a `WARNING` log when a partitioned table directory contains flat
+  `.parquet` files but no `year=YYYY` partitions, signalling that the migration script
+  has not been run.
+
+---
+
 ## [0.5.2] — 2026-04-16 ([#46](https://github.com/michaelk95/market_data/pull/46))
 
 ### Added
