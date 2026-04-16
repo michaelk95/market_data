@@ -262,10 +262,21 @@ class TestReadTableValidation:
         assert isinstance(result, pd.DataFrame)
         assert result.empty
 
+    def test_missing_table_dir_returns_schema_columns(self, tmp_path):
+        result = read_table("ohlcv", tmp_path)
+        assert "symbol" in result.columns
+        assert "period_start_date" in result.columns
+
     def test_missing_single_file_returns_empty(self, tmp_path):
         (tmp_path / "macro").mkdir()  # dir exists but no data.parquet
         result = read_table("macro", tmp_path)
         assert result.empty
+
+    def test_missing_single_file_returns_schema_columns(self, tmp_path):
+        (tmp_path / "macro").mkdir()
+        result = read_table("macro", tmp_path)
+        assert "series_id" in result.columns
+        assert "period_start_date" in result.columns
 
     def test_no_matching_partitions_returns_empty(self, tmp_path):
         # Write 2022 data, then query for 2024 only
@@ -276,6 +287,30 @@ class TestReadTableValidation:
             start_date=datetime.date(2024, 1, 1),
         )
         assert result.empty
+
+    def test_no_matching_partitions_returns_schema_columns(self, tmp_path):
+        df = pd.DataFrame([_ohlcv_row("AAPL", datetime.date(2022, 6, 1))])
+        write_table(df, "ohlcv", tmp_path)
+        result = read_table("ohlcv", tmp_path, start_date=datetime.date(2024, 1, 1))
+        assert "symbol" in result.columns
+        assert "period_start_date" in result.columns
+
+    def test_flat_files_without_partitions_warns(self, tmp_path, caplog):
+        """Old-format flat .parquet files should trigger a migration warning."""
+        import logging
+        fund_dir = tmp_path / "fundamentals"
+        fund_dir.mkdir()
+        # Simulate old per-ticker file (old schema, no year= partitions)
+        pd.DataFrame({"symbol": ["AAPL"]}).to_parquet(fund_dir / "AAPL.parquet")
+        with caplog.at_level(logging.WARNING, logger="market_data.storage"):
+            result = read_table("fundamentals", tmp_path)
+        assert result.empty
+        assert "symbol" in result.columns
+        assert any("flat .parquet" in msg for msg in caplog.messages)
+
+    def test_columns_projection_on_empty_returns_requested_columns(self, tmp_path):
+        result = read_table("ohlcv", tmp_path, columns=["symbol", "close"])
+        assert list(result.columns) == ["symbol", "close"]
 
 
 # ---------------------------------------------------------------------------
