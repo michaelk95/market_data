@@ -111,6 +111,7 @@ ANALYST_ESTIMATES_SCHEMA = pa.schema([
 MACRO_SCHEMA = pa.schema([
     pa.field("series_id", pa.string()),
     pa.field("value", pa.float64()),
+    pa.field("valid_to_date", pa.date32()),  # FRED realtime_end; 9999-12-31 = currently active
     *_BITEMPORAL_FIELDS,
 ])
 
@@ -147,7 +148,7 @@ DEDUP_KEYS: dict[str, list[str]] = {
     "ohlcv": ["symbol", "period_start_date"],
     "indices": ["symbol", "period_start_date"],
     "fundamentals": ["symbol", "period_start_date"],
-    "macro": ["series_id", "period_start_date"],
+    "macro": ["series_id", "period_start_date", "report_date"],
     "options": ["symbol", "period_start_date", "expiry", "strike", "option_type"],
     "analyst_estimates": ["symbol", "period_start_date"],
 }

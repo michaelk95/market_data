@@ -2,7 +2,12 @@
 fetch_macro.py
 --------------
 Collect macroeconomic time series from the FRED API (Federal Reserve Bank
-of St. Louis).
+of St. Louis) with full vintage (realtime) history.
+
+Each row carries the vintage date (``report_date = FRED realtime_start``) and
+the supersession date (``valid_to_date = FRED realtime_end``; ``9999-12-31``
+for the currently-active value), enabling point-in-time queries that are free
+of look-ahead bias from data revisions (e.g., GDP advance vs. final estimates).
 
 Series collected by default
 ----------------------------
@@ -22,8 +27,7 @@ Quarterly
   GDPC1     Real GDP (chained 2017 dollars)
   GDP       Nominal GDP
 
-Data is stored under data/macro/<SERIES_ID>.parquet.
-Schema: date (date), series_id (str), value (float).
+Data is stored under data/macro/data.parquet (single unpartitioned file).
 
 Requires
 --------
@@ -34,6 +38,7 @@ Usage
     market-data-fetch-macro                        # update all default series
     market-data-fetch-macro --series DFF T10Y2Y    # update specific series
     market-data-fetch-macro --start 1990-01-01     # custom bootstrap start
+    market-data-fetch-macro --data-dir /path/to/data  # custom data directory
 """
 
 from __future__ import annotations
@@ -41,13 +46,15 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from market_data.config import cfg as _cfg
 from market_data.resilience import fred_retry
+from market_data.schema import DataSource, ReportTimeMarker
+from market_data.storage import read_table, write_table
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +62,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-MACRO_DIR = Path(_cfg.get("paths.macro_dir", "data/macro"))
+DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 
 # Default bootstrap start date — FRED has data going back decades for most series
 DEFAULT_START: str = _cfg.get("collection.macro_start", "1990-01-01")
@@ -82,6 +89,12 @@ DEFAULT_SERIES: list[str] = list(
     ).keys()
 )
 
+_EMPTY_COLS: list[str] = [
+    "series_id", "value", "valid_to_date",
+    "period_start_date", "period_end_date",
+    "report_date", "report_time_marker", "source", "collected_at",
+]
+
 
 # ---------------------------------------------------------------------------
 # API key loading
@@ -94,7 +107,6 @@ def _load_api_key() -> str:
     Raises RuntimeError with a clear message if the key is missing so the
     user knows exactly what to fix.
     """
-    # Attempt to load .env from the current working directory
     try:
         from dotenv import load_dotenv  # type: ignore[import]
         load_dotenv()
@@ -112,72 +124,24 @@ def _load_api_key() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Storage helpers
-# ---------------------------------------------------------------------------
-
-def _series_path(series_id: str, macro_dir: Path) -> Path:
-    return macro_dir / f"{series_id}.parquet"
-
-
-def load_macro_series(series_id: str, macro_dir: Path) -> pd.DataFrame | None:
-    """Load an existing macro Parquet, or return None if it doesn't exist."""
-    path = _series_path(series_id, macro_dir)
-    if not path.exists():
-        return None
-    return pd.read_parquet(path)
-
-
-def save_macro_series(series_id: str, new_df: pd.DataFrame, macro_dir: Path) -> int:
-    """
-    Merge new_df into the existing per-series Parquet file.
-
-    Deduplicates on (date, series_id), sorts by date, and writes atomically.
-    Returns the number of net-new rows added.
-    """
-    if new_df.empty:
-        return 0
-
-    macro_dir.mkdir(parents=True, exist_ok=True)
-    path = _series_path(series_id, macro_dir)
-
-    if path.exists():
-        existing = pd.read_parquet(path)
-        combined = pd.concat([existing, new_df], ignore_index=True)
-        before = len(existing)
-    else:
-        combined = new_df.copy()
-        before = 0
-
-    combined["date"] = pd.to_datetime(combined["date"]).dt.date
-    combined = (
-        combined
-        .drop_duplicates(subset=["date", "series_id"])
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
-
-    tmp_path = path.with_suffix(".tmp.parquet")
-    combined.to_parquet(tmp_path, index=False)
-    tmp_path.replace(path)
-
-    return len(combined) - before
-
-
-# ---------------------------------------------------------------------------
 # Fetch
 # ---------------------------------------------------------------------------
 
 @fred_retry
-def fetch_series(
+def fetch_series_vintages(
     series_id: str,
-    start: str,
+    realtime_start: str,
     api_key: str,
 ) -> pd.DataFrame:
     """
-    Pull a FRED series from `start` to today.
+    Pull all vintages of a FRED series from *realtime_start* to today.
 
-    Returns a DataFrame with columns: date (date), series_id (str), value (float).
-    Returns an empty DataFrame if no data is available.
+    Uses ``get_series_all_releases`` so each row carries the vintage date
+    (``report_date``) and supersession date (``valid_to_date``), enabling
+    point-in-time queries that are free of look-ahead bias from revisions.
+
+    Returns a DataFrame ready for ``storage.write_table("macro", ...)``.
+    Returns an empty DataFrame (with correct columns) if no data is available.
     """
     try:
         import fredapi  # type: ignore[import]
@@ -187,54 +151,62 @@ def fetch_series(
         ) from exc
 
     fred = fredapi.Fred(api_key=api_key)
-    raw = fred.get_series(series_id, observation_start=start)
+    raw = fred.get_series_all_releases(series_id, realtime_start=realtime_start)
 
     if raw is None or raw.empty:
-        return pd.DataFrame(columns=["date", "series_id", "value"])
+        return pd.DataFrame(columns=_EMPTY_COLS)
 
+    # After reset_index(), columns are: realtime_start, realtime_end, date, value
     df = raw.reset_index()
-    df.columns = ["date", "value"]
-    df["date"] = pd.to_datetime(df["date"]).dt.date
+    df = df.dropna(subset=["value"])
+    if df.empty:
+        return pd.DataFrame(columns=_EMPTY_COLS)
+
+    df["period_start_date"] = pd.to_datetime(df["date"]).dt.date
+    df["period_end_date"] = df["period_start_date"]
+    df["report_date"] = pd.to_datetime(df["realtime_start"]).dt.date
+    df["valid_to_date"] = pd.to_datetime(df["realtime_end"]).dt.date
     df["series_id"] = series_id
-    df = df[["date", "series_id", "value"]].dropna(subset=["value"])
+    df["report_time_marker"] = ReportTimeMarker.POST_MARKET
+    df["source"] = DataSource.FRED
+    df["collected_at"] = datetime.now(timezone.utc)
     df["value"] = df["value"].astype(float)
 
-    return df.reset_index(drop=True)
+    return df[_EMPTY_COLS].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
 # Core run logic
 # ---------------------------------------------------------------------------
 
-def update_series(series_id: str, api_key: str, start: str, macro_dir: Path) -> int:
+def update_series(series_id: str, api_key: str, start: str, data_dir: Path) -> int:
     """
-    Bootstrap or incrementally update a single FRED series.
+    Bootstrap or incrementally update a single FRED series with vintage data.
 
-    On first run: pulls from `start` to today.
-    On subsequent runs: pulls from (last stored date - 7 days) to today.
-    The 7-day lookback ensures we don't miss delayed revisions.
+    On first run: pulls all vintages from *start* to today.
+    On subsequent runs: pulls from (max report_date - 7 days) to today,
+    catching late-released revisions.
 
     Returns the number of new rows added.
     """
-    existing = load_macro_series(series_id, macro_dir)
+    existing = read_table("macro", data_dir, series_ids=[series_id])
 
-    if existing is None:
-        fetch_start = start
+    if existing.empty:
+        realtime_start = start
         action = f"bootstrap from {start}"
     else:
-        last_date = existing["date"].max()
-        # Look back 7 days to catch revisions / late-released data points
-        lookback = last_date - timedelta(days=7)
-        fetch_start = str(lookback)
+        latest_report = pd.to_datetime(existing["report_date"]).dt.date.max()
+        lookback = latest_report - timedelta(days=7)
+        realtime_start = str(lookback)
         action = f"incremental since {lookback}"
 
-    df = fetch_series(series_id, start=fetch_start, api_key=api_key)
+    df = fetch_series_vintages(series_id, realtime_start=realtime_start, api_key=api_key)
 
     if df.empty:
         logger.info("%s  no data  (%s)", series_id, action)
         return 0
 
-    added = save_macro_series(series_id, df, macro_dir)
+    added = write_table(df, "macro", data_dir)
     logger.info("%s  +%d rows  (%s)", series_id, added, action)
     return added
 
@@ -242,10 +214,10 @@ def update_series(series_id: str, api_key: str, start: str, macro_dir: Path) -> 
 def run(
     series_ids: list[str] | None = None,
     start: str = DEFAULT_START,
-    macro_dir: Path = MACRO_DIR,
+    data_dir: Path = DATA_DIR,
 ) -> None:
     """
-    Update all macro series (or a custom subset).
+    Update all macro series (or a custom subset) with full vintage history.
     """
     targets = series_ids or DEFAULT_SERIES
     today = date.today()
@@ -258,7 +230,7 @@ def run(
     total_added = 0
     for series_id in targets:
         try:
-            added = update_series(series_id, api_key=api_key, start=start, macro_dir=macro_dir)
+            added = update_series(series_id, api_key=api_key, start=start, data_dir=data_dir)
             total_added += added
         except Exception as exc:
             logger.error("%s  ERROR: %s", series_id, exc, exc_info=True)
@@ -275,7 +247,7 @@ def main() -> None:
     setup_logging()
 
     parser = argparse.ArgumentParser(
-        description="Fetch/update macroeconomic series from FRED (CPI, GDP, Treasury, etc.)."
+        description="Fetch/update macroeconomic series from FRED with full vintage history."
     )
     parser.add_argument(
         "--series",
@@ -289,9 +261,15 @@ def main() -> None:
         metavar="YYYY-MM-DD",
         help=f"Bootstrap start date (default: {DEFAULT_START}).",
     )
+    parser.add_argument(
+        "--data-dir",
+        default=str(DATA_DIR),
+        metavar="DIR",
+        help="Root data directory (default: data/).",
+    )
     args = parser.parse_args()
 
-    run(series_ids=args.series, start=args.start)
+    run(series_ids=args.series, start=args.start, data_dir=Path(args.data_dir))
 
 
 if __name__ == "__main__":
