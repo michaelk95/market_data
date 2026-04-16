@@ -95,3 +95,7 @@ State (onboarded tickers, last run date, options cycle position) is persisted to
 Do not attribute commits or PRs to Claude. No `Co-Authored-By` lines, no mention of Claude in commit messages or PR bodies.
 
 Name branches using conventional prefixes: `feature/`, `fix/`, `hotfix/`, `release/`, or `chore/`, followed by a concise lowercase hyphenated description (e.g. `feature/add-login`, `fix/issue-123-header-bug`). No random words.
+
+## Changelog
+
+Every PR must add a new entry to the top of `CHANGELOG.md` using `MAJOR.MINOR.PATCH` versioning (breaking/feature/fix) and a link to the PR.

@@ -4,7 +4,143 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [Unreleased]
+## [0.5.2] — 2026-04-16 ([#46](https://github.com/michaelk95/market_data/pull/46))
+
+### Added
+- `edgar.py` — SEC EDGAR client; maps tickers to CIK and fetches the most recent
+  10-K/10-Q filing date, used as the authoritative `report_date` to eliminate
+  look-ahead bias in fundamental queries.
+- `migrate_fundamentals.py` — one-shot CLI (`market-data-migrate-fundamentals`) to
+  convert existing per-ticker parquets to the year-partitioned bitemporal layout with
+  EDGAR date backfill. Accepts `--backup` and `--dry-run` flags.
+- `report_date_known` boolean field added to `FUNDAMENTALS_SCHEMA`.
+
+### Changed
+- `fetch_fundamentals.py`: rewrites fetcher to use the bitemporal schema via
+  `storage.write_table()`. Falls back to collection date with
+  `report_date_known=False` when EDGAR has no record for a ticker.
+
+---
+
+## [0.5.1] — 2026-04-15 ([#44](https://github.com/michaelk95/market_data/pull/44))
+
+### Added
+- `resilience.py` — tenacity-backed retry decorators (`yf_retry`, `fred_retry`,
+  `requests_retry`) with exponential backoff (2–60s, up to 3 attempts). Transient
+  errors (timeout, connection reset, HTTP 429/5xx) are retried; non-transient errors
+  surface immediately.
+- Failure tracking and quarantine: `fetch_failures` dict in `state.json` counts
+  consecutive failures per ticker. Tickers reaching the threshold (default: 5) are
+  quarantined — skipped from onboard and update queues until a successful fetch resets
+  the counter. Quarantined tickers appear in the run banner and summary line.
+- `smoke_test.py` — `market-data-smoke-test` CLI hits each data source with one
+  minimal request and reports reachability. Exits 0 if all sources are up, 1 otherwise.
+- `tenacity>=8.2` added to dependencies.
+- `resilience:` section added to `config.yaml` exposing `retry_attempts`,
+  `retry_min_wait`, `retry_max_wait`, and `quarantine_threshold`.
+
+### Changed
+- `fetch.py`: `@yf_retry` applied to `fetch_history` and `fetch_incremental`.
+- `fetch_fundamentals.py`: extracted `_fetch_ticker_info` with `@yf_retry`; network
+  errors now propagate to the outer loop so they are counted as failures rather than
+  silently skipped.
+- `fetch_macro.py`: `@fred_retry` applied to `fetch_series`.
+- `fetch_options.py`: `@yf_retry` applied to `_get_expiry_dates` and
+  `_get_option_chain`.
+- `fetch_tickers.py`: `@requests_retry` applied to `fetch_etf_holdings`.
+- `orchestrator.py`: quarantine filtering applied to onboard and update queues;
+  quarantine summary added to run output.
+
+---
+
+## [0.5.0] — 2026-04-15 ([#43](https://github.com/michaelk95/market_data/pull/43))
+
+### Added
+- `schema.py` — `ReportTimeMarker`/`DataSource` enums, PyArrow schemas for all 5
+  data types, and per-table `DEDUP_KEYS`, `SORT_KEYS`, and `PARTITION_COLS` maps.
+- `storage.py` — `write_table()` and `read_table()` with Hive-style `year=`
+  partitioning for high-volume tables (ohlcv, fundamentals, options) and single-file
+  storage for small tables (indices, macro). Writes are atomic (`.tmp` → rename) and
+  idempotent (dedup on table-specific keys).
+- Bitemporal fields added to every schema: `period_start_date`, `period_end_date`,
+  `report_date`, `report_time_marker`, `source`, `collected_at`.
+
+### Notes
+- Existing fetch modules are unchanged by this release. Individual pipeline stages
+  are migrated to `storage.write_table()` in subsequent releases.
+
+---
+
+## [0.4.1] — 2026-04-15 ([#36](https://github.com/michaelk95/market_data/pull/36))
+
+### Added
+- `config.yaml` — repo-root configuration file with sections for `collection`,
+  `macro`, `indices`, `paths`, `sources`, and `health`.
+- `config.py` — `Config` class loaded once at import; exposes `cfg.get("dot.key",
+  default)` and `cfg.resolve_path()` for path resolution relative to the repo root.
+  Gracefully degrades to hardcoded defaults if PyYAML is missing.
+- `pyyaml>=6.0` added to dependencies.
+
+### Changed
+- `orchestrator.py`, `fetch.py`, `fetch_macro.py`, `fetch_options.py`,
+  `fetch_fundamentals.py`, `fetch_indices.py`, `health.py`: module-level constants
+  now initialized from `cfg`. Behaviour unchanged.
+
+---
+
+## [0.4.0] — 2026-04-15 ([#31](https://github.com/michaelk95/market_data/pull/31), [#34](https://github.com/michaelk95/market_data/pull/34), [#35](https://github.com/michaelk95/market_data/pull/35))
+
+### Added
+- `logging_config.py` — `setup_logging()` configures a `market_data` package logger
+  with a rotating file handler (`logs/market_data.log`, 10 MB, 5 backups) and stderr
+  console handler.
+- `metrics.py` — per-run statistics via `start_run()`, `record_symbol_result()`,
+  `finish_run()`, and `load_history()`. Persists to `logs/metrics.json` with a 90-day
+  rolling window (auto-pruned on `finish_run`). Wired into all orchestrator pipeline
+  steps (onboard, update, options, fundamentals, indices, macro).
+- `health.py` — `health_check(data_dir)` scans parquet file mtimes across `ohlcv/`,
+  `options/`, `fundamentals/`, and `macro/` subdirectories. Returns a structured
+  per-type staleness report (thresholds: ohlcv 2d, options 14d, fundamentals 35d,
+  macro 7d). Missing or empty directories are treated as stale.
+- `market-data-health` CLI entry point; exits with code 1 if any data type is stale.
+
+### Changed
+- `fetch_fundamentals.py`, `fetch_indices.py`, `fetch_macro.py`, `fetch_options.py`,
+  `fetch_tickers.py`, `merge.py`, `orchestrator.py`, `verify_onboarding.py`: all
+  `print()` calls replaced with structured `logger` calls at appropriate levels
+  (DEBUG/INFO/WARNING/ERROR).
+
+---
+
+## [0.3.2] — 2026-04-09 ([#22](https://github.com/michaelk95/market_data/pull/22))
+
+### Fixed
+- `etf_config.py`: bonds entry in `BROAD_ETFS` was `TIPS` (not a valid symbol);
+  corrected to `TIP` (iShares TIPS Bond ETF).
+
+---
+
+## [0.3.1] — 2026-04-07 ([#5](https://github.com/michaelk95/market_data/pull/5))
+
+### Added
+- GitHub Actions CI with two jobs: `test` (Python 3.10 + 3.12 matrix) and `lint`
+  (ruff).
+- `pytest-cov` wired into `pyproject.toml`; coverage prints on every local run.
+- 92 tests across 5 modules — no network calls, all scoped to `tmp_path`:
+  - `test_fetch.py`: `_normalize()`, `save_ticker_data()` idempotency/dedup/append,
+    `load_ticker_data()` round-trip.
+  - `test_fetch_tickers.py`: filtering, `apply_date_added()`, `merge_holdings()`,
+    `_inject_etf_rows()` idempotency.
+  - `test_merge.py`: multi-file merge, dedup on `(date, symbol)`, sort order,
+    self-exclusion of merged output, parent-dir creation.
+  - `test_orchestrator.py`: `load_state()` / `save_state()` round-trip, defaults for
+    missing keys, `load_ordered_tickers()` order and error cases.
+  - `test_verify_onboarding.py`: ghost/orphan detection, `fix()` ghost removal,
+    idempotency, non-onboarded field preservation.
+
+---
+
+## [0.3.0] — 2026-04-07 ([#3](https://github.com/michaelk95/market_data/pull/3))
 
 ### Added
 - `etf_config.py` — central registry of sector and broad-market ETFs tracked by the
@@ -21,17 +157,15 @@ All notable changes to this project will be documented here.
   broad-market ETFs receive `index = "BROAD_ETF"`. `date_added` tracking works the
   same as for index constituents.
 - `orchestrator.py`:
-  - ETFs are now priority-onboarded at the start of each run (outside the normal
+  - ETFs are priority-onboarded at the start of each run (outside the normal
     `--batch-size` batch limit) so they are not queued behind ~1,500 stock tickers.
   - Fundamentals snapshots now skip ETF symbols — yfinance `.info` fields for fund
     wrappers don't map to the equity fundamentals schema.
   - Options cycle now includes ETF symbols (via `fetch_options.get_etf_symbols()`)
     ahead of SP500 constituents, ensuring ETFs are covered at the start of every cycle.
-- `fetch_options.py`:
-  - New `get_etf_symbols(onboarded)` function returns onboarded ETF symbols in
-    `etf_config` order (sector first, then broad).
-  - Standalone CLI (`market-data-fetch-options`) now includes ETFs in the cycle
-    alongside SP500 tickers.
+- `fetch_options.py`: new `get_etf_symbols(onboarded)` function returns onboarded ETF
+  symbols in `etf_config` order (sector first, then broad). Standalone CLI now
+  includes ETFs in the cycle alongside SP500 tickers.
 
 ### Notes
 - ETFs collect OHLCV history and options chains; fundamentals are intentionally
@@ -41,7 +175,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.2.4.3] — 2026-04-06
+## [0.2.4.3] — 2026-04-06 ([#4](https://github.com/michaelk95/market_data/pull/4))
 
 ### Fixed
 - `fetch_options.py`: `snapshot_date`, `symbol`, and `expiry` columns were all-null in
@@ -87,7 +221,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.2.4] — 2026-04-05
+## [0.2.4] — 2026-04-05 ([#2](https://github.com/michaelk95/market_data/pull/2))
 
 ### Added
 - `fetch_options.py` — daily option chain snapshots for SP500 tickers via yfinance:
@@ -112,7 +246,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.2.3] — 2026-04-05
+## [0.2.3] — 2026-04-05 ([#2](https://github.com/michaelk95/market_data/pull/2))
 
 ### Added
 - `fetch_fundamentals.py` — monthly per-ticker fundamental snapshots via yfinance `.info`:
@@ -129,7 +263,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.2.2] — 2026-04-05
+## [0.2.2] — 2026-04-05 ([#2](https://github.com/michaelk95/market_data/pull/2))
 
 ### Added
 - `fetch_macro.py` — collects macroeconomic time series from the FRED API:
@@ -157,7 +291,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.2.1] — 2026-04-05
+## [0.2.1] — 2026-04-05 ([#2](https://github.com/michaelk95/market_data/pull/2))
 
 ### Added
 - `fetch_indices.py` — collects daily OHLCV data for market index and rate symbols:
@@ -176,7 +310,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.1.0] — 2026-04-04
+## [0.1.0] — 2026-04-04 ([#1](https://github.com/michaelk95/market_data/pull/1))
 
 ### Added
 - `fetch_tickers.py` — downloads current Russell 2000 constituents from the
