@@ -233,8 +233,10 @@ def read_macro_as_of(
     if df.empty:
         return df
 
-    report_date = pd.to_datetime(df["report_date"]).dt.date
-    valid_to_date = pd.to_datetime(df["valid_to_date"]).dt.date
+    # date32 parquet columns return as object dtype with Python date objects.
+    # Avoid pd.to_datetime: it overflows on 9999-12-31 in pandas < 2.0.
+    report_date = df["report_date"]
+    valid_to_date = df["valid_to_date"]
 
     mask = (
         (report_date <= as_of_date)

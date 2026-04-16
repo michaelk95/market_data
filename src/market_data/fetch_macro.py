@@ -201,7 +201,10 @@ def fetch_series_vintages(
     df["period_start_date"] = pd.to_datetime(df["date"]).dt.date
     df["period_end_date"] = df["period_start_date"]
     df["report_date"] = pd.to_datetime(df["realtime_start"]).dt.date
-    df["valid_to_date"] = pd.to_datetime(df["realtime_end"]).dt.date
+    # Avoid pd.to_datetime here: it overflows on 9999-12-31 in pandas < 2.0
+    df["valid_to_date"] = df["realtime_end"].apply(
+        lambda d: d if isinstance(d, date) else pd.Timestamp(d).date()
+    )
     df["series_id"] = series_id
     df["report_time_marker"] = ReportTimeMarker.POST_MARKET
     df["source"] = DataSource.FRED
