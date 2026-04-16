@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
-import pytest
 
 from market_data.fetch_fundamentals import fetch_fundamentals, run
 from market_data.schema import validate_bitemporal_columns
