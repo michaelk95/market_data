@@ -28,11 +28,6 @@ _FULL_INFO = {
     "forwardEps": 6.90,
     "totalRevenue": 400_000_000_000,
     "profitMargins": 0.25,
-    "targetMeanPrice": 200.0,
-    "targetLowPrice": 170.0,
-    "targetHighPrice": 230.0,
-    "recommendationMean": 1.8,
-    "numberOfAnalystOpinions": 42,
 }
 
 
@@ -80,20 +75,6 @@ class TestFetchFundamentals:
 
     @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
     @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
-    def test_analyst_recommendation_is_string(self, _mock_info, _mock_edgar):
-        record = fetch_fundamentals("AAPL", today=_TODAY)
-        assert isinstance(record["analyst_recommendation"], str)
-        assert record["analyst_recommendation"] == "1.8"
-
-    @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
-    @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
-    def test_analyst_count_is_int(self, _mock_info, _mock_edgar):
-        record = fetch_fundamentals("AAPL", today=_TODAY)
-        assert isinstance(record["analyst_count"], int)
-        assert record["analyst_count"] == 42
-
-    @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
-    @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
     def test_source_is_yfinance(self, _mock_info, _mock_edgar):
         record = fetch_fundamentals("AAPL", today=_TODAY)
         assert record["source"] == "yfinance"
@@ -116,12 +97,12 @@ class TestFetchFundamentals:
     @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
     @patch(
         "market_data.fetch_fundamentals._fetch_ticker_info",
-        return_value={**_FULL_INFO, "recommendationMean": None, "targetMeanPrice": None},
+        return_value={**_FULL_INFO, "trailingPE": None, "forwardPE": None},
     )
     def test_missing_optional_fields_stored_as_none(self, _mock_info, _mock_edgar):
         record = fetch_fundamentals("AAPL", today=_TODAY)
-        assert record["analyst_recommendation"] is None
-        assert record["analyst_target_mean"] is None
+        assert record["trailing_pe"] is None
+        assert record["forward_pe"] is None
 
 
 # ---------------------------------------------------------------------------
