@@ -98,6 +98,7 @@ FUNDAMENTALS_SCHEMA = pa.schema([
     pa.field("analyst_target_high", pa.float64()),
     pa.field("analyst_recommendation", pa.string()),
     pa.field("analyst_count", pa.int64()),
+    pa.field("report_date_known", pa.bool_()),
     *_BITEMPORAL_FIELDS,
 ])
 

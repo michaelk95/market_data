@@ -27,10 +27,9 @@ def ohlcv_df():
 
 @pytest.fixture
 def fundamentals_df():
-    """One-row fundamentals snapshot matching fetch_fundamentals.py SCHEMA_COLS."""
+    """One-row fundamentals snapshot in the bitemporal schema."""
     return pd.DataFrame(
         {
-            "as_of": [date(2024, 1, 31)],
             "symbol": ["AAPL"],
             "market_cap": [3_000_000_000_000.0],
             "enterprise_value": [3_100_000_000_000.0],
@@ -44,8 +43,15 @@ def fundamentals_df():
             "analyst_target_mean": [200.0],
             "analyst_target_low": [170.0],
             "analyst_target_high": [230.0],
-            "analyst_recommendation": [1.8],
+            "analyst_recommendation": ["1.8"],
             "analyst_count": [42],
+            "report_date_known": [True],
+            "period_start_date": [date(2024, 1, 31)],
+            "period_end_date": [date(2024, 1, 31)],
+            "report_date": [date(2024, 1, 31)],
+            "report_time_marker": ["post-market"],
+            "source": ["yfinance"],
+            "collected_at": [pd.Timestamp("2024-01-31 21:00:00", tz="UTC")],
         }
     )
 
