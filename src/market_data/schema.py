@@ -93,6 +93,12 @@ FUNDAMENTALS_SCHEMA = pa.schema([
     pa.field("forward_eps", pa.float64()),
     pa.field("total_revenue", pa.float64()),
     pa.field("profit_margin", pa.float64()),
+    pa.field("report_date_known", pa.bool_()),
+    *_BITEMPORAL_FIELDS,
+])
+
+ANALYST_ESTIMATES_SCHEMA = pa.schema([
+    pa.field("symbol", pa.string()),
     pa.field("analyst_target_mean", pa.float64()),
     pa.field("analyst_target_low", pa.float64()),
     pa.field("analyst_target_high", pa.float64()),
@@ -133,6 +139,7 @@ TABLE_SCHEMAS: dict[str, pa.Schema] = {
     "fundamentals": FUNDAMENTALS_SCHEMA,
     "macro": MACRO_SCHEMA,
     "options": OPTIONS_SCHEMA,
+    "analyst_estimates": ANALYST_ESTIMATES_SCHEMA,
 }
 
 # Columns that uniquely identify one observation (used for deduplication)
@@ -142,6 +149,7 @@ DEDUP_KEYS: dict[str, list[str]] = {
     "fundamentals": ["symbol", "period_start_date"],
     "macro": ["series_id", "period_start_date"],
     "options": ["symbol", "period_start_date", "expiry", "strike", "option_type"],
+    "analyst_estimates": ["symbol", "period_start_date"],
 }
 
 # Columns used to order rows within each stored file
@@ -151,6 +159,7 @@ SORT_KEYS: dict[str, list[str]] = {
     "fundamentals": ["period_start_date", "symbol"],
     "macro": ["period_start_date", "series_id"],
     "options": ["period_start_date", "symbol", "expiry", "strike", "option_type"],
+    "analyst_estimates": ["period_start_date", "symbol"],
 }
 
 # Tables partitioned by year (Hive-style: year=YYYY/data.parquet).
@@ -159,6 +168,7 @@ PARTITION_COLS: dict[str, list[str]] = {
     "ohlcv": ["year"],
     "fundamentals": ["year"],
     "options": ["year"],
+    "analyst_estimates": ["year"],
     "indices": [],
     "macro": [],
 }

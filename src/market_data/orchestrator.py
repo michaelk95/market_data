@@ -11,9 +11,12 @@ Each run executes in order:
   2. UPDATE        — for every already-onboarded ticker, pull any new trading days
                      since the last run and append them to their Parquet file.
 
-  3. FUNDAMENTALS  — (optional, monthly) snapshot market cap, analyst estimates,
-                     and valuation ratios for all onboarded tickers via yfinance.
+  3. FUNDAMENTALS  — (optional, monthly) snapshot market cap and valuation ratios
+                     for all onboarded tickers via yfinance.
                      Auto-skipped if last run was <30 days ago.
+
+  3b. ANALYST-ESTIMATES — (optional, daily) snapshot analyst price targets and
+                     recommendation scores for all onboarded equities via yfinance.
 
   4. OPTIONS       — (optional, daily) fetch option chain snapshots (IV, bid/ask,
                      open interest) for the next batch of SP500 + sector/broad ETF
@@ -37,7 +40,7 @@ Usage
     market-data-run --batch-size 25                         # onboard fewer per day
     market-data-run --batch-size 0                          # updates only, no new tickers
     market-data-run --no-update                             # onboard only, skip updates
-    market-data-run --indices --macro --fundamentals --options --merge # full daily run (recommended)
+    market-data-run --indices --macro --fundamentals --analyst-estimates --options --merge # full daily run (recommended)
 """
 
 from __future__ import annotations
@@ -190,6 +193,31 @@ def maybe_run_fundamentals(
         logger.warning("Fundamentals fetch failed: %s.", exc, exc_info=True)
         metrics.finish_run()
         return False
+
+
+# ---------------------------------------------------------------------------
+# Analyst estimates step (daily, no throttle)
+# ---------------------------------------------------------------------------
+
+def step_analyst_estimates(onboarded: set[str]) -> None:
+    """
+    Fetch a daily analyst estimates snapshot for all onboarded equity tickers.
+
+    ETFs are excluded (no meaningful analyst price targets for fund wrappers).
+    Failures are non-fatal and logged as warnings.
+    """
+    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    from market_data import fetch_analyst_estimates  # noqa: PLC0415
+
+    symbols = sorted(s for s in onboarded if s not in ALL_ETFS)
+    logger.info("ANALYST-ESTIMATES  %d tickers", len(symbols))
+    try:
+        metrics.start_run("analyst_estimates")
+        fetch_analyst_estimates.run(symbols=symbols)
+        metrics.finish_run()
+    except Exception as exc:
+        logger.warning("Analyst estimates fetch failed: %s.", exc, exc_info=True)
+        metrics.finish_run()
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +446,7 @@ def step_update(
 # Main
 # ---------------------------------------------------------------------------
 
-def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool = False, run_macro: bool = False, run_fundamentals: bool = False, run_options: bool = False, options_batch_size: int = 50) -> None:
+def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool = False, run_macro: bool = False, run_fundamentals: bool = False, run_analyst_estimates: bool = False, run_options: bool = False, options_batch_size: int = 50) -> None:
     today = date.today()
 
     state = load_state()
@@ -493,6 +521,10 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     fundamentals_ran = False
     if run_fundamentals:
         fundamentals_ran = maybe_run_fundamentals(state, onboarded, today)
+
+    # --- 3b. Optional analyst estimates snapshot (daily, no throttle) ---
+    if run_analyst_estimates:
+        step_analyst_estimates(onboarded)
 
     # --- 4. Optional options chain batch ---
     updated_options_cycle: set[str] | None = None
@@ -593,8 +625,16 @@ def main() -> None:
         "--fundamentals",
         action="store_true",
         help=(
-            "Also snapshot per-ticker fundamentals (market cap, analyst estimates, etc.). "
+            "Also snapshot per-ticker fundamentals (market cap, valuation ratios, etc.). "
             f"Auto-skipped if last run was <{FUNDAMENTALS_REFRESH_DAYS} days ago."
+        ),
+    )
+    parser.add_argument(
+        "--analyst-estimates",
+        action="store_true",
+        help=(
+            "Also fetch daily analyst estimate snapshots (price targets, recommendation score) "
+            "for all onboarded equities. Runs unconditionally every time this flag is passed."
         ),
     )
     parser.add_argument(
@@ -621,6 +661,7 @@ def main() -> None:
         run_indices=args.indices,
         run_macro=args.macro,
         run_fundamentals=args.fundamentals,
+        run_analyst_estimates=args.analyst_estimates,
         run_options=args.options,
         options_batch_size=args.options_batch_size,
     )

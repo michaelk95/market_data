@@ -1,40 +1,34 @@
 """
-fetch_fundamentals.py
----------------------
-Collect point-in-time fundamental snapshots for equity tickers via yfinance.
+fetch_analyst_estimates.py
+--------------------------
+Collect daily point-in-time analyst estimate snapshots for equity tickers
+via yfinance.
 
-Each run appends one row per ticker to the unified fundamentals table
-(data/fundamentals/year=YYYY/data.parquet) using the bitemporal schema
+Each run appends one row per ticker to the analyst_estimates table
+(data/analyst_estimates/year=YYYY/data.parquet) using the bitemporal schema
 defined in schema.py.
 
-The `report_date` for each snapshot is the most recent 10-K or 10-Q
-filing date from SEC EDGAR — the official submission date when the data
-became publicly available.  When EDGAR has no record for a ticker the
-collection date is used as a fallback and `report_date_known` is set
-to False.
+Unlike fundamentals, analyst estimates have no SEC EDGAR filing date — the
+consensus is updated continuously by individual brokers.  The collection date
+is therefore used as both `period_start_date` and `report_date`, and
+`report_date_known` is always False.
+
+Running this daily accumulates a revision history of analyst consensus, enabling
+point-in-time queries: filter ``report_date <= as_of_date`` to see what the
+consensus was on any past date.
 
 Fields captured
 ---------------
-Valuation
-  market_cap            marketCap
-  enterprise_value      enterpriseValue
-  trailing_pe           trailingPE
-  forward_pe            forwardPE
-  price_to_book         priceToBook
-
-Earnings & revenue
-  trailing_eps          trailingEps
-  forward_eps           forwardEps
-  total_revenue         totalRevenue
-  profit_margin         profitMargins
-
-Analyst estimates are collected separately (daily cadence) by
-fetch_analyst_estimates.py into the analyst_estimates table.
+  analyst_target_mean       targetMeanPrice
+  analyst_target_low        targetLowPrice
+  analyst_target_high       targetHighPrice
+  analyst_recommendation    recommendationMean  (stored as string, e.g. "1.8")
+  analyst_count             numberOfAnalystOpinions
 
 Usage
 -----
-    market-data-fetch-fundamentals                     # fetch all onboarded tickers
-    market-data-fetch-fundamentals --symbols AAPL MSFT # specific symbols only
+    market-data-fetch-analyst-estimates                       # fetch all onboarded tickers
+    market-data-fetch-analyst-estimates --symbols AAPL MSFT  # specific symbols only
 """
 
 from __future__ import annotations
@@ -48,7 +42,6 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
-from market_data import edgar
 from market_data.config import cfg as _cfg
 from market_data.resilience import yf_retry
 from market_data.schema import DataSource, ReportTimeMarker
@@ -61,21 +54,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
-SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.fundamentals", 2)
+SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.analyst_estimates", 2)
 
 # Mapping: our column name → yfinance info key
-INFO_FIELDS: dict[str, str] = {
-    # Valuation
-    "market_cap":               "marketCap",
-    "enterprise_value":         "enterpriseValue",
-    "trailing_pe":              "trailingPE",
-    "forward_pe":               "forwardPE",
-    "price_to_book":            "priceToBook",
-    # Earnings & revenue
-    "trailing_eps":             "trailingEps",
-    "forward_eps":              "forwardEps",
-    "total_revenue":            "totalRevenue",
-    "profit_margin":            "profitMargins",
+ANALYST_FIELDS: dict[str, str] = {
+    "analyst_target_mean":    "targetMeanPrice",
+    "analyst_target_low":     "targetLowPrice",
+    "analyst_target_high":    "targetHighPrice",
+    "analyst_recommendation": "recommendationMean",
+    "analyst_count":          "numberOfAnalystOpinions",
 }
 
 
@@ -89,9 +76,9 @@ def _fetch_ticker_info(symbol: str) -> dict:
     return yf.Ticker(symbol).info
 
 
-def fetch_fundamentals(symbol: str, today: date | None = None) -> dict | None:
+def fetch_analyst_estimates(symbol: str, today: date | None = None) -> dict | None:
     """
-    Pull a fundamentals snapshot for `symbol` via yfinance and attach
+    Pull an analyst estimates snapshot for `symbol` via yfinance and attach
     bitemporal provenance fields.
 
     Parameters
@@ -106,8 +93,8 @@ def fetch_fundamentals(symbol: str, today: date | None = None) -> dict | None:
     -------
     dict or None
         A record ready to pass to ``pd.DataFrame([record])`` and then
-        ``storage.write_table()``, or None if the ticker returned no usable
-        data (e.g. ETF, delisted, or no market cap reported).
+        ``storage.write_table()``, or None if the ticker has no analyst
+        coverage (e.g. ETF, micro-cap, or no targetMeanPrice reported).
 
     Raises on transient network errors after retries are exhausted, so the
     caller can distinguish a temporary outage from a permanently absent ticker.
@@ -117,32 +104,30 @@ def fetch_fundamentals(symbol: str, today: date | None = None) -> dict | None:
 
     info = _fetch_ticker_info(symbol)
 
-    # Require at least a market cap to consider the record valid
-    if not info.get("marketCap"):
+    # Require at least a mean price target to consider the record valid
+    if not info.get("targetMeanPrice"):
         return None
 
     record: dict = {"symbol": symbol}
 
-    for col, yf_key in INFO_FIELDS.items():
+    for col, yf_key in ANALYST_FIELDS.items():
         raw = info.get(yf_key)
-        record[col] = float(raw) if raw is not None else None
+        if col == "analyst_recommendation":
+            record[col] = str(raw) if raw is not None else None
+        elif col == "analyst_count":
+            record[col] = int(raw) if raw is not None else None
+        else:
+            record[col] = float(raw) if raw is not None else None
 
-    # --- EDGAR report_date ---
-    filing_date = edgar.get_latest_filing_date(symbol, before=today)
-    if filing_date is not None:
-        report_date = filing_date
-        report_date_known = True
-    else:
-        report_date = today
-        report_date_known = False
-
-    record["report_date_known"] = report_date_known
+    # Analyst estimates have no authoritative publication date — use collection
+    # date as the report_date proxy and flag it as estimated.
+    record["report_date_known"] = False
 
     # --- Bitemporal fields ---
     record.update({
-        "period_start_date":  report_date,
-        "period_end_date":    report_date,
-        "report_date":        report_date,
+        "period_start_date":  today,
+        "period_end_date":    today,
+        "report_date":        today,
         "report_time_marker": ReportTimeMarker.POST_MARKET,
         "source":             DataSource.YFINANCE,
         "collected_at":       datetime.now(timezone.utc),
@@ -160,14 +145,14 @@ def run(
     data_dir: Path = DATA_DIR,
 ) -> int:
     """
-    Fetch and store a fundamentals snapshot for each symbol in `symbols`.
+    Fetch and store an analyst estimates snapshot for each symbol in `symbols`.
 
     Returns the total number of net new rows written to the store.
     """
     today = date.today()
     total = len(symbols)
 
-    logger.info("market_data fundamentals  —  %s", today)
+    logger.info("market_data analyst-estimates  —  %s", today)
     logger.info("Tickers: %d", total)
 
     records: list[dict] = []
@@ -177,16 +162,19 @@ def run(
     for i, symbol in enumerate(symbols, 1):
         prefix = f"[{i:>4}/{total}] {symbol:<8}"
         try:
-            record = fetch_fundamentals(symbol, today=today)
+            record = fetch_analyst_estimates(symbol, today=today)
             if record is None:
-                logger.info("%s  no data", prefix)
+                logger.info("%s  no coverage", prefix)
                 skipped += 1
             else:
-                mktcap = record.get("market_cap")
-                known = record.get("report_date_known")
-                cap_str = f"  mktcap={mktcap:,.0f}" if mktcap else ""
-                pit_str = f"  report_date={record['report_date']}" + ("" if known else " (estimated)")
-                logger.info("%s  fetched%s%s", prefix, cap_str, pit_str)
+                mean = record.get("analyst_target_mean")
+                count = record.get("analyst_count")
+                logger.info(
+                    "%s  target_mean=%s  analyst_count=%s",
+                    prefix,
+                    f"{mean:.2f}" if mean is not None else "n/a",
+                    count if count is not None else "n/a",
+                )
                 records.append(record)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
@@ -198,10 +186,10 @@ def run(
     saved = 0
     if records:
         df = pd.DataFrame(records)
-        saved = write_table(df, "fundamentals", data_dir)
+        saved = write_table(df, "analyst_estimates", data_dir)
 
     logger.info(
-        "fundamentals done: saved=%d  skipped=%d  failed=%d", saved, skipped, failed
+        "analyst-estimates done: saved=%d  skipped=%d  failed=%d", saved, skipped, failed
     )
     return saved
 
@@ -216,7 +204,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Fetch fundamental snapshots (market cap, analyst estimates, etc.) "
+            "Fetch daily analyst estimate snapshots (price targets, recommendation) "
             "for equity tickers via yfinance."
         )
     )
@@ -236,14 +224,16 @@ def main() -> None:
     else:
         # Load from state.json
         import json  # noqa: PLC0415
+        from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
         state_file = Path("state.json")
         if not state_file.exists():
             logger.warning("No state.json found and no --symbols provided. Nothing to do.")
             return
         state = json.loads(state_file.read_text())
-        symbols = sorted(state.get("onboarded", []))
+        all_onboarded = sorted(state.get("onboarded", []))
+        symbols = [s for s in all_onboarded if s not in ALL_ETFS]
         if not symbols:
-            logger.warning("No onboarded tickers in state.json. Run market-data-run first.")
+            logger.warning("No onboarded equity tickers in state.json. Run market-data-run first.")
             return
 
     run(symbols=symbols)

@@ -75,16 +75,16 @@ class TestBitemporalColumns:
 
 
 class TestTableSchemas:
-    expected_tables = {"ohlcv", "indices", "fundamentals", "macro", "options"}
+    expected_tables = {"ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"}
 
     def test_all_tables_present(self):
         assert set(TABLE_SCHEMAS) == self.expected_tables
 
-    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options"])
+    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"])
     def test_each_schema_is_pyarrow(self, table_name):
         assert isinstance(TABLE_SCHEMAS[table_name], pa.Schema)
 
-    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options"])
+    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"])
     def test_each_schema_contains_bitemporal_fields(self, table_name):
         schema = TABLE_SCHEMAS[table_name]
         field_names = schema.names
@@ -98,10 +98,15 @@ class TestTableSchemas:
         for col in ("symbol", "open", "high", "low", "close", "volume"):
             assert col in names
 
-    def test_fundamentals_has_analyst_columns(self):
-        names = TABLE_SCHEMAS["fundamentals"].names
+    def test_analyst_estimates_has_analyst_columns(self):
+        names = TABLE_SCHEMAS["analyst_estimates"].names
         for col in ("analyst_target_mean", "analyst_recommendation", "analyst_count"):
             assert col in names
+
+    def test_fundamentals_does_not_have_analyst_columns(self):
+        names = TABLE_SCHEMAS["fundamentals"].names
+        for col in ("analyst_target_mean", "analyst_recommendation", "analyst_count"):
+            assert col not in names
 
     def test_macro_has_series_id_and_value(self):
         names = TABLE_SCHEMAS["macro"].names
@@ -135,7 +140,7 @@ class TestTableSchemas:
 
 
 class TestLookupDictionaries:
-    all_tables = {"ohlcv", "indices", "fundamentals", "macro", "options"}
+    all_tables = {"ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"}
 
     def test_dedup_keys_covers_all_tables(self):
         assert set(DEDUP_KEYS) == self.all_tables
@@ -146,14 +151,14 @@ class TestLookupDictionaries:
     def test_partition_cols_covers_all_tables(self):
         assert set(PARTITION_COLS) == self.all_tables
 
-    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options"])
+    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"])
     def test_dedup_keys_are_lists_of_strings(self, table_name):
         keys = DEDUP_KEYS[table_name]
         assert isinstance(keys, list)
         assert all(isinstance(k, str) for k in keys)
         assert len(keys) > 0
 
-    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options"])
+    @pytest.mark.parametrize("table_name", ["ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"])
     def test_dedup_keys_are_valid_schema_columns(self, table_name):
         schema_names = set(TABLE_SCHEMAS[table_name].names)
         for key in DEDUP_KEYS[table_name]:
@@ -163,7 +168,7 @@ class TestLookupDictionaries:
 
     def test_partitioned_tables(self):
         partitioned = {t for t, cols in PARTITION_COLS.items() if cols}
-        assert partitioned == {"ohlcv", "fundamentals", "options"}
+        assert partitioned == {"ohlcv", "fundamentals", "options", "analyst_estimates"}
 
     def test_non_partitioned_tables(self):
         non_partitioned = {t for t, cols in PARTITION_COLS.items() if not cols}
