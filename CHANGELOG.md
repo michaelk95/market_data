@@ -4,12 +4,23 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.6.3] — 2026-04-16 ([#58](https://github.com/michaelk95/market_data/issues/58))
+## [0.6.4] — 2026-04-16 ([#58](https://github.com/michaelk95/market_data/issues/58))
 
 ### Added
 - `market_data.version()` returns `{"version": ..., "sha": ...}` for experiment provenance.
 - `market_data.__version__` is a plain string of the installed package version.
 - SHA falls back to `"unknown"` if git is unavailable.
+
+---
+
+## [0.6.3] — 2026-04-16 ([#59](https://github.com/michaelk95/market_data/pull/59))
+
+### Changed
+- `fetch_macro.SERIES_LOOKBACK_DAYS`: widened incremental lookback window for `UNRATE`,
+  `PCEPI`, and `PCEPILFE` from 7 days to 400 days. `UNRATE` comes from the same BLS
+  Employment Situation release as `PAYEMS` and is revised each February alongside it;
+  `PCEPI`/`PCEPILFE` are subject to annual BEA comprehensive revisions every July that
+  can silently rewrite years of history.
 
 ---
 
