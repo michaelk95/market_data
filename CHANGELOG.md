@@ -4,6 +4,15 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.6.3] — 2026-04-16 ([#58](https://github.com/michaelk95/market_data/issues/58))
+
+### Added
+- `market_data.version()` returns `{"version": ..., "sha": ...}` for experiment provenance.
+- `market_data.__version__` is a plain string of the installed package version.
+- SHA falls back to `"unknown"` if git is unavailable.
+
+---
+
 ## [0.6.2] — 2026-04-16 ([#54](https://github.com/michaelk95/market_data/pull/54))
 
 ### Changed
