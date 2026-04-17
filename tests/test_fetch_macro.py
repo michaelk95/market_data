@@ -14,10 +14,11 @@ from market_data.fetch_macro import (
     SERIES_LOOKBACK_DAYS,
     _DEFAULT_LOOKBACK_DAYS,
     _detect_revisions,
+    _recompute_revision_ranks,
     fetch_series_vintages,
     update_series,
 )
-from market_data.schema import DataSource, ReportTimeMarker
+from market_data.schema import PARTITION_COLS, DataSource, ReportTimeMarker
 from market_data.storage import write_table
 
 
@@ -323,6 +324,39 @@ class TestUpdateSeries:
         stored = pd.read_parquet(tmp_path / "macro" / "data.parquet")
         stored = stored[stored["series_id"] == "GDPC1"].sort_values("report_date")
         assert list(stored["revision_rank"]) == [1, 2]
+
+    def test_revision_rank_recomputed_partitioned_layout(self, tmp_path, monkeypatch):
+        """If the macro table is ever year-partitioned, _recompute_revision_ranks
+        still discovers and rewrites every partition file for the series."""
+        # Simulate a partitioned macro layout.  PARTITION_COLS is a shared dict,
+        # so in-place setitem is visible to fetch_macro's imported reference.
+        monkeypatch.setitem(PARTITION_COLS, "macro", ["year"])
+
+        period_2019 = datetime.date(2019, 10, 1)
+        period_2020 = datetime.date(2020, 1, 1)
+
+        part_2019 = pd.DataFrame([
+            {**_seed_row("GDPC1", period_2019, datetime.date(2020, 1, 30)), "revision_rank": 99},
+            {**_seed_row("GDPC1", period_2019, datetime.date(2020, 3, 26)), "revision_rank": 99},
+        ])
+        part_2020 = pd.DataFrame([
+            {**_seed_row("GDPC1", period_2020, datetime.date(2020, 4, 30)), "revision_rank": 99},
+        ])
+
+        dir_2019 = tmp_path / "macro" / "year=2019"
+        dir_2020 = tmp_path / "macro" / "year=2020"
+        dir_2019.mkdir(parents=True)
+        dir_2020.mkdir(parents=True)
+        part_2019.to_parquet(dir_2019 / "data.parquet", index=False)
+        part_2020.to_parquet(dir_2020 / "data.parquet", index=False)
+
+        _recompute_revision_ranks("GDPC1", tmp_path)
+
+        stored_2019 = pd.read_parquet(dir_2019 / "data.parquet").sort_values("report_date")
+        stored_2020 = pd.read_parquet(dir_2020 / "data.parquet").sort_values("report_date")
+
+        assert list(stored_2019["revision_rank"]) == [1, 2]
+        assert list(stored_2020["revision_rank"]) == [1]
 
 
 # ---------------------------------------------------------------------------

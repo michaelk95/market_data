@@ -57,7 +57,7 @@ import pandas as pd
 
 from market_data.config import cfg as _cfg
 from market_data.resilience import fred_retry
-from market_data.schema import DataSource, ReportTimeMarker
+from market_data.schema import PARTITION_COLS, DataSource, ReportTimeMarker
 from market_data.storage import read_table, write_table
 
 logger = logging.getLogger(__name__)
@@ -237,6 +237,34 @@ def fetch_series_vintages(
 # Revision-rank maintenance
 # ---------------------------------------------------------------------------
 
+def _macro_partition_paths(data_dir: Path) -> list[Path]:
+    """Return all existing parquet paths holding macro data.
+
+    Handles both layouts:
+
+    - Unpartitioned (current):   ``data/macro/data.parquet``
+    - Year-partitioned (future): ``data/macro/year=YYYY/data.parquet``
+
+    Layout is determined from ``PARTITION_COLS["macro"]`` so this stays in
+    sync if the macro table is ever partitioned alongside ``ohlcv`` et al.
+    """
+    table_dir = data_dir / "macro"
+    if not table_dir.exists():
+        return []
+
+    if PARTITION_COLS.get("macro"):
+        return [
+            entry / "data.parquet"
+            for entry in sorted(table_dir.iterdir())
+            if entry.is_dir()
+            and entry.name.startswith("year=")
+            and (entry / "data.parquet").exists()
+        ]
+
+    single = table_dir / "data.parquet"
+    return [single] if single.exists() else []
+
+
 def _recompute_revision_ranks(series_id: str, data_dir: Path) -> None:
     """Recompute ``revision_rank`` for *series_id* across the entire stored dataset.
 
@@ -244,32 +272,58 @@ def _recompute_revision_ranks(series_id: str, data_dir: Path) -> None:
     incremental fetches (which only cover a lookback window) add new vintages
     to observations that already exist in storage.
 
-    Operates directly on the parquet file with an atomic tmp-rename write.
+    Works for both the unpartitioned macro layout (single ``data.parquet``) and
+    a year-partitioned layout; partition files are discovered via
+    ``_macro_partition_paths`` rather than hardcoded.  Each affected partition
+    file is rewritten atomically (tmp + rename).
     """
-    path = data_dir / "macro" / "data.parquet"
-    if not path.exists():
+    paths = _macro_partition_paths(data_dir)
+    if not paths:
         return
 
-    df = pd.read_parquet(path)
-    if "series_id" not in df.columns:
+    # Load every partition once; collect this series' rows across all of them
+    # so ranks can be recomputed globally.
+    frames: dict[Path, pd.DataFrame] = {p: pd.read_parquet(p) for p in paths}
+    series_slices = [
+        part.loc[part["series_id"] == series_id]
+        for part in frames.values()
+        if "series_id" in part.columns and (part["series_id"] == series_id).any()
+    ]
+    if not series_slices:
         return
 
-    mask = df["series_id"] == series_id
-    if not mask.any():
-        return
-
-    series_df = df.loc[mask].copy()
-    # Sort so cumcount is assigned in chronological vintage order
-    series_df = series_df.sort_values(["period_start_date", "report_date"])
-    series_df["revision_rank"] = (
-        series_df.groupby("period_start_date", sort=False).cumcount() + 1
+    combined = (
+        pd.concat(series_slices, ignore_index=True)
+        .sort_values(["period_start_date", "report_date"])
     )
-    # Align by index back into the full DataFrame
-    df.loc[mask, "revision_rank"] = series_df["revision_rank"]
+    combined["revision_rank"] = (
+        combined.groupby("period_start_date", sort=False).cumcount() + 1
+    )
 
-    tmp = path.with_name("data.tmp.parquet")
-    df.to_parquet(tmp, index=False)
-    tmp.replace(path)
+    # Join key includes series_id so the rank map cannot collide with rows
+    # from other series that happen to share a (period, report) pair.
+    rank_map = combined[
+        ["series_id", "period_start_date", "report_date", "revision_rank"]
+    ].rename(columns={"revision_rank": "_new_rank"})
+
+    for path, part in frames.items():
+        if "series_id" not in part.columns or not (part["series_id"] == series_id).any():
+            continue
+
+        merged = part.merge(
+            rank_map,
+            on=["series_id", "period_start_date", "report_date"],
+            how="left",
+        )
+        updated_mask = merged["_new_rank"].notna()
+        merged.loc[updated_mask, "revision_rank"] = (
+            merged.loc[updated_mask, "_new_rank"].astype(part["revision_rank"].dtype)
+        )
+        merged = merged.drop(columns=["_new_rank"])
+
+        tmp = path.with_name(path.stem + ".tmp.parquet")
+        merged.to_parquet(tmp, index=False)
+        tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
