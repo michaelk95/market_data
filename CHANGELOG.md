@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.7.0] — 2026-04-16 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.7.0] — 2026-04-16 ([#62](https://github.com/michaelk95/market_data/pull/62))
 
 ### Added
 - `tickers.csv` now includes a `date_removed` column. When a ticker drops out of
