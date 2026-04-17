@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.6.1] — 2026-04-16 ([#54](https://github.com/michaelk95/market_data/pull/54))
+
+### Changed
+- `fetch_macro.SERIES_LOOKBACK_DAYS`: widened incremental lookback window for `PAYEMS`,
+  `CPIAUCSL`, and `CPILFESL` from 7 days to 400 days. These series are subject to annual
+  benchmark revisions (PAYEMS each February; CPI periodically) that can silently rewrite
+  years of history — a 7-day window would miss them entirely.
+
+---
+
 ## [0.6.0] — 2026-04-16 ([#42](https://github.com/michaelk95/market_data/pull/42))
 
 ### Added

@@ -93,12 +93,19 @@ DEFAULT_SERIES: list[str] = list(
     ).keys()
 )
 
-# Incremental lookback window per series.  GDP annual revisions (released each
-# July) can silently revise observations from years prior, so quarterly GDP
-# series use a much wider window than the daily/monthly default.
+# Incremental lookback window per series.  Some FRED series are subject to
+# periodic revisions that can silently rewrite observations from years prior:
+#   - GDP / GDPC1: annual revisions every July
+#   - PAYEMS: annual benchmark revisions every February
+#   - CPIAUCSL / CPILFESL: periodic methodological revisions
+# A 400-day window covers one full annual revision cycle for each.  Series
+# not listed here use the 7-day default.
 SERIES_LOOKBACK_DAYS: dict[str, int] = {
-    "GDPC1": 400,
-    "GDP":   400,
+    "GDPC1":    400,  # annual GDP revisions each July
+    "GDP":      400,  # annual GDP revisions each July
+    "PAYEMS":   400,  # annual benchmark revisions each February
+    "CPIAUCSL": 400,  # periodic methodological revisions
+    "CPILFESL": 400,  # periodic methodological revisions
 }
 _DEFAULT_LOOKBACK_DAYS = 7
 
