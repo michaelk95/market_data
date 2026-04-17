@@ -1,3 +1,3 @@
-from importlib.metadata import version
+from market_data.version import version
 
-__version__ = version("market_data")
+__version__ = version()["version"]
