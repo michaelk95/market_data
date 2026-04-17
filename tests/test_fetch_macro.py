@@ -5,6 +5,8 @@ import datetime
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import pandas as pd
 
 from market_data.fetch_macro import (
@@ -225,10 +227,29 @@ class TestUpdateSeries:
         expected = str(report_date - datetime.timedelta(days=expected_days))
         assert captured["realtime_start"] == expected
 
+    @pytest.mark.parametrize("series_id", ["PAYEMS", "CPIAUCSL", "CPILFESL"])
+    def test_annually_revised_series_uses_400_day_lookback(self, series_id, tmp_path):
+        """PAYEMS, CPIAUCSL, and CPILFESL use a 400-day window for annual benchmark revisions."""
+        report_date = datetime.date(2024, 7, 1)
+        seed = pd.DataFrame([_seed_row(series_id, datetime.date(2024, 6, 1), report_date)])
+        write_table(seed, "macro", tmp_path)
+
+        captured: dict = {}
+
+        def fake_fetch(sid, realtime_start, api_key):
+            captured["realtime_start"] = realtime_start
+            return pd.DataFrame()
+
+        with patch("market_data.fetch_macro.fetch_series_vintages", side_effect=fake_fetch):
+            update_series(series_id, api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+
+        expected = str(report_date - datetime.timedelta(days=400))
+        assert captured["realtime_start"] == expected
+
     def test_default_series_uses_7_day_lookback(self, tmp_path):
         """Series not in SERIES_LOOKBACK_DAYS fall back to _DEFAULT_LOOKBACK_DAYS."""
         report_date = datetime.date(2024, 7, 1)
-        seed = pd.DataFrame([_seed_row("CPIAUCSL", datetime.date(2024, 6, 1), report_date)])
+        seed = pd.DataFrame([_seed_row("DFF", datetime.date(2024, 6, 1), report_date)])
         write_table(seed, "macro", tmp_path)
 
         captured: dict = {}
@@ -238,7 +259,7 @@ class TestUpdateSeries:
             return pd.DataFrame()
 
         with patch("market_data.fetch_macro.fetch_series_vintages", side_effect=fake_fetch):
-            update_series("CPIAUCSL", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+            update_series("DFF", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
 
         expected = str(report_date - datetime.timedelta(days=_DEFAULT_LOOKBACK_DAYS))
         assert captured["realtime_start"] == expected
