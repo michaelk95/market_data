@@ -4,6 +4,17 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.6.3] — 2026-04-16 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+
+### Changed
+- `fetch_macro.SERIES_LOOKBACK_DAYS`: widened incremental lookback window for `UNRATE`,
+  `PCEPI`, and `PCEPILFE` from 7 days to 400 days. `UNRATE` comes from the same BLS
+  Employment Situation release as `PAYEMS` and is revised each February alongside it;
+  `PCEPI`/`PCEPILFE` are subject to annual BEA comprehensive revisions every July that
+  can silently rewrite years of history.
+
+---
+
 ## [0.6.2] — 2026-04-16 ([#54](https://github.com/michaelk95/market_data/pull/54))
 
 ### Changed
