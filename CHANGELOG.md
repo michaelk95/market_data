@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.6.3] — 2026-04-16 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.6.3] — 2026-04-16 ([#59](https://github.com/michaelk95/market_data/pull/59))
 
 ### Changed
 - `fetch_macro.SERIES_LOOKBACK_DAYS`: widened incremental lookback window for `UNRATE`,
