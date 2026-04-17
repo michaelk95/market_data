@@ -227,9 +227,9 @@ class TestUpdateSeries:
         expected = str(report_date - datetime.timedelta(days=expected_days))
         assert captured["realtime_start"] == expected
 
-    @pytest.mark.parametrize("series_id", ["PAYEMS", "CPIAUCSL", "CPILFESL"])
+    @pytest.mark.parametrize("series_id", ["PAYEMS", "CPIAUCSL", "CPILFESL", "UNRATE", "PCEPI", "PCEPILFE"])
     def test_annually_revised_series_uses_400_day_lookback(self, series_id, tmp_path):
-        """PAYEMS, CPIAUCSL, and CPILFESL use a 400-day window for annual benchmark revisions."""
+        """BLS/BEA benchmark-revised series use a 400-day window to catch annual revisions."""
         report_date = datetime.date(2024, 7, 1)
         seed = pd.DataFrame([_seed_row(series_id, datetime.date(2024, 6, 1), report_date)])
         write_table(seed, "macro", tmp_path)
