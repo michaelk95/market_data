@@ -4,6 +4,20 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.6.1] — 2026-04-16 ([#53](https://github.com/michaelk95/market_data/pull/53))
+
+### Fixed
+- `fetch_macro._recompute_revision_ranks()` now discovers partition files via
+  `PARTITION_COLS["macro"]` rather than hardcoding `data/macro/data.parquet`.
+  If the macro table is ever year-partitioned (like `ohlcv`, `fundamentals`,
+  `options`), ranks are recomputed correctly across all partition files instead
+  of silently doing nothing.
+- Extracted `fetch_macro._macro_partition_paths()` to centralise file
+  discovery for the macro table's current (unpartitioned) and any future
+  (year-partitioned) layout.
+
+---
+
 ## [0.6.0] — 2026-04-16 ([#42](https://github.com/michaelk95/market_data/pull/42))
 
 ### Added
