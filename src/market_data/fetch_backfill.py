@@ -39,7 +39,6 @@ import json
 import logging
 import sys
 import time
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
