@@ -28,6 +28,8 @@ virtual environment:
 | `market-data-fetch-macro` | Update FRED macro series (CPI, GDP, Fed Funds rate, Treasury spread, etc.) |
 | `market-data-fetch-fundamentals` | Snapshot per-ticker fundamentals for all onboarded tickers (market cap, analyst targets, etc.) |
 | `market-data-fetch-options` | Run the next batch of SP500 option chain snapshots (IV, bid/ask, open interest) |
+| `market-data-fetch-constituent-history` | Download historical S&P 500 constituent membership (1996–present) to `data/constituent_history.parquet` |
+| `market-data-backfill-constituents` | Backfill OHLCV data for delisted S&P 500 tickers to mitigate survivorship bias |
 
 Each command accepts `--help` for full usage details.
 
@@ -103,7 +105,44 @@ market-data-fetch-macro                 # FRED series back to 1990-01-01
 market-data-fetch-fundamentals          # current snapshot for all onboarded tickers
 ```
 
-### 6. Merge into a single file
+### 6. Mitigate survivorship bias (one-time)
+
+By default, the pipeline only tracks tickers in the **current** Russell 2000
+and S&P 500 constituents. This introduces survivorship bias: companies that
+were delisted, acquired, or removed from an index are invisible in the dataset,
+making historical backtests appear more profitable than they would have been
+in practice.
+
+To reduce this bias, run the following two commands once after initial setup:
+
+```bash
+# Step 1 — download S&P 500 constituent history (1996–present, ~1,200 tickers)
+market-data-fetch-constituent-history
+
+# Step 2 — backfill OHLCV for the ~743 delisted tickers
+# (runs in batches of 50; safe to interrupt and resume)
+market-data-backfill-constituents --batch-size 50
+market-data-backfill-constituents --batch-size 50  # re-run until "Nothing to backfill"
+```
+
+Use `--dry-run` to preview the scope before committing:
+
+```bash
+market-data-backfill-constituents --dry-run
+```
+
+**What this does:** `constituent_history.parquet` records every ticker's
+S&P 500 membership span (`date_added` → `date_removed`). For each delisted
+ticker with no existing OHLCV file, the backfill fetches that exact date range
+from yfinance and saves it to `data/ohlcv/` using the same schema as the
+regular pipeline. Progress (completed and failed tickers) is written to
+`state.json` after each ticker so the run is safely resumable.
+
+**Limitation:** yfinance has incomplete coverage for some older or
+bankruptcy-reorganised tickers. Those are recorded in `state.json` under
+`backfill_failures` and can be reviewed after the run.
+
+### 7. Merge into a single file
 
 Merge all per-ticker OHLCV files into a single Parquet for the backtest engine:
 

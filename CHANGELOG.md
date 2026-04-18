@@ -4,6 +4,27 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.7.0] — 2026-04-17 ([#TBD](https://github.com/michaelk95/market_data/pull/TBD))
+
+### Added
+- `fetch_constituent_history.py`: downloads historical S&P 500 constituent
+  membership from the fja05680/sp500 dataset (`sp500_ticker_start_end.csv`)
+  and writes `data/constituent_history.parquet` with columns `ticker`, `index`,
+  `date_added`, `date_removed` (NaT = still active). Tickers that rejoined the
+  index appear as multiple rows. Addresses MD-03 of the survivorship bias audit
+  (issue #60).
+- `fetch_backfill.py`: backfills historical OHLCV data for delisted S&P 500
+  constituents. Reads `constituent_history.parquet`, finds tickers with no
+  existing OHLCV file, and fetches their full membership date range via
+  yfinance. Progress (completed/failures) is persisted to `state.json` so runs
+  are safely resumable. Supports `--batch-size` and `--dry-run`.
+- `fetch.fetch_date_range()`: bounded date-range variant of `fetch_history()`
+  used by the backfill pipeline.
+- `market-data-fetch-constituent-history` and `market-data-backfill-constituents`
+  CLI commands.
+
+---
+
 ## [0.6.3] — 2026-04-16 ([#59](https://github.com/michaelk95/market_data/pull/59))
 
 ### Changed

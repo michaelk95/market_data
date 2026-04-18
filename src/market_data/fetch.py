@@ -120,6 +120,28 @@ def fetch_incremental(symbol: str, since: date) -> pd.DataFrame:
     return _normalize(raw, symbol)
 
 
+@yf_retry
+def fetch_date_range(
+    symbol: str,
+    start: date,
+    end: date | None = None,
+) -> pd.DataFrame:
+    """Download daily OHLCV history for *symbol* from *start* to *end* inclusive.
+
+    Used by the backfill pipeline to fetch bounded membership periods for
+    delisted tickers.  Falls back to today when *end* is None.
+    """
+    if end is None:
+        end = date.today()
+    raw = yf.Ticker(symbol).history(
+        start=str(start),
+        end=str(end + timedelta(days=1)),  # yfinance end is exclusive
+        auto_adjust=True,
+        actions=False,
+    )
+    return _normalize(raw, symbol)
+
+
 def load_ticker_data(symbol: str, data_dir: Path) -> pd.DataFrame | None:
     """
     Load the existing Parquet for `symbol`, or return None if it doesn't exist.
