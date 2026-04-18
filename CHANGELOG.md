@@ -4,6 +4,27 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.7.2] — 2026-04-17 ([#65](https://github.com/michaelk95/market_data/pull/65))
+
+### Added
+- `fetch_constituent_history.py`: downloads historical S&P 500 constituent
+  membership from the fja05680/sp500 dataset (`sp500_ticker_start_end.csv`)
+  and writes `data/constituent_history.parquet` with columns `ticker`, `index`,
+  `date_added`, `date_removed` (NaT = still active). Tickers that rejoined the
+  index appear as multiple rows. Addresses MD-03 of the survivorship bias audit
+  (issue #60).
+- `fetch_backfill.py`: backfills historical OHLCV data for delisted S&P 500
+  constituents. Reads `constituent_history.parquet`, finds tickers with no
+  existing OHLCV file, and fetches their full membership date range via
+  yfinance. Progress (completed/failures) is persisted to `state.json` so runs
+  are safely resumable. Supports `--batch-size` and `--dry-run`.
+- `fetch.fetch_date_range()`: bounded date-range variant of `fetch_history()`
+  used by the backfill pipeline.
+- `market-data-fetch-constituent-history` and `market-data-backfill-constituents`
+  CLI commands.
+
+---
+
 ## [0.7.1] — 2026-04-17 ([#63](https://github.com/michaelk95/market_data/issues/63))
 
 ### Fixed
@@ -21,7 +42,6 @@ All notable changes to this project will be documented here.
   empty `date_removed`. This enables point-in-time universe filtering in
   downstream consumers (e.g. `smelt`'s `ore.universe(as_of)`).
 
-
 ---
 
 ## [0.6.4] — 2026-04-16 ([#58](https://github.com/michaelk95/market_data/issues/58))
@@ -30,7 +50,6 @@ All notable changes to this project will be documented here.
 - `market_data.version()` returns `{"version": ..., "sha": ...}` for experiment provenance.
 - `market_data.__version__` is a plain string of the installed package version.
 - SHA falls back to `"unknown"` if git is unavailable.
-
 
 ---
 
