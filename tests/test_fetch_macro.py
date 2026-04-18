@@ -13,7 +13,10 @@ from market_data.fetch_macro import (
     DEFAULT_START,
     SERIES_LOOKBACK_DAYS,
     _DEFAULT_LOOKBACK_DAYS,
+    _VINTAGE_CHUNK_YEARS,
     _detect_revisions,
+    _derive_realtime_end,
+    _fetch_all_releases_chunked,
     _recompute_revision_ranks,
     fetch_series_vintages,
     update_series,
@@ -23,25 +26,18 @@ from market_data.storage import write_table
 
 
 # ---------------------------------------------------------------------------
-# Shared fixture — mimics what fredapi.get_series_all_releases returns
-# (index=realtime_start, columns=realtime_end/date/value)
+# Shared fixture — mimics what fredapi.get_series_all_releases actually returns.
+# fredapi returns a plain DataFrame with integer index and columns:
+#   realtime_start, date, value
+# (realtime_end is commented out in fredapi source and not returned)
 # ---------------------------------------------------------------------------
-
-_VINTAGE_INDEX = pd.Index(
-    [
-        datetime.date(2020, 1, 30),  # first vintage of 2019-Q4
-        datetime.date(2020, 3, 26),  # revised vintage of 2019-Q4
-        datetime.date(2020, 1, 30),  # first vintage of 2019-Q3
-    ],
-    name="realtime_start",
-)
 
 _VINTAGE_DF = pd.DataFrame(
     {
-        "realtime_end": [
-            datetime.date(2020, 3, 25),   # superseded
-            datetime.date(9999, 12, 31),  # currently active
-            datetime.date(9999, 12, 31),  # currently active
+        "realtime_start": [
+            datetime.date(2020, 1, 30),  # first vintage of 2019-Q4
+            datetime.date(2020, 3, 26),  # revised vintage of 2019-Q4
+            datetime.date(2020, 1, 30),  # first vintage of 2019-Q3
         ],
         "date": [
             datetime.date(2019, 10, 1),
@@ -49,8 +45,7 @@ _VINTAGE_DF = pd.DataFrame(
             datetime.date(2019, 7, 1),
         ],
         "value": [19.1, 19.2, 18.9],
-    },
-    index=_VINTAGE_INDEX,
+    }
 )
 
 
@@ -126,14 +121,8 @@ class TestFetchSeriesVintages:
         assert (result["report_time_marker"] == ReportTimeMarker.POST_MARKET).all()
 
     def test_drops_nan_value_rows(self):
-        df_with_nan = pd.DataFrame(
-            {
-                "realtime_end": _VINTAGE_DF["realtime_end"].tolist(),
-                "date": _VINTAGE_DF["date"].tolist(),
-                "value": [19.1, float("nan"), 18.9],
-            },
-            index=_VINTAGE_INDEX,
-        )
+        df_with_nan = _VINTAGE_DF.copy()
+        df_with_nan["value"] = [19.1, float("nan"), 18.9]
         result = self._call(df=df_with_nan)
         assert len(result) == 2
 
@@ -167,6 +156,110 @@ class TestFetchSeriesVintages:
         with patch("fredapi.Fred", return_value=_make_fred_mock(_VINTAGE_DF)):
             result = fetch_series_vintages("CUSTOM_XYZ", realtime_start="2020-01-01", api_key="test")
         assert result["release_name"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# TestDeriveRealtimeEnd
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveRealtimeEnd:
+    """Unit tests for _derive_realtime_end()."""
+
+    def test_single_vintage_gets_far_future(self):
+        df = pd.DataFrame({
+            "realtime_start": [datetime.date(2020, 1, 30)],
+            "date": [datetime.date(2019, 10, 1)],
+            "value": [19.1],
+        })
+        result = _derive_realtime_end(df)
+        assert result.iloc[0] == datetime.date(9999, 12, 31)
+
+    def test_superseded_vintage_gets_next_start_minus_one_day(self):
+        df = pd.DataFrame({
+            "realtime_start": [datetime.date(2020, 1, 30), datetime.date(2020, 3, 26)],
+            "date": [datetime.date(2019, 10, 1), datetime.date(2019, 10, 1)],
+            "value": [19.1, 19.2],
+        })
+        result = _derive_realtime_end(df)
+        assert result.iloc[0] == datetime.date(2020, 3, 25)
+        assert result.iloc[1] == datetime.date(9999, 12, 31)
+
+    def test_independent_observation_dates_do_not_cross(self):
+        """Vintages for different observation dates are bucketed independently."""
+        df = _VINTAGE_DF.copy()
+        result = _derive_realtime_end(df)
+        # 2019-Q4 first vintage: superseded by 2020-03-26 → realtime_end = 2020-03-25
+        q4_first = df[(df["date"] == datetime.date(2019, 10, 1)) & (df["realtime_start"] == datetime.date(2020, 1, 30))].index[0]
+        assert result.loc[q4_first] == datetime.date(2020, 3, 25)
+        # 2019-Q3 only vintage → 9999-12-31
+        q3 = df[df["date"] == datetime.date(2019, 7, 1)].index[0]
+        assert result.loc[q3] == datetime.date(9999, 12, 31)
+
+    def test_preserves_input_row_order(self):
+        """Result is aligned to the original DataFrame index, not sorted order."""
+        df = pd.DataFrame({
+            "realtime_start": [datetime.date(2020, 3, 26), datetime.date(2020, 1, 30)],
+            "date": [datetime.date(2019, 10, 1), datetime.date(2019, 10, 1)],
+            "value": [19.2, 19.1],
+        })
+        result = _derive_realtime_end(df)
+        # Row 0 is the later vintage → 9999-12-31
+        assert result.iloc[0] == datetime.date(9999, 12, 31)
+        # Row 1 is the earlier vintage → superseded day before row 0's realtime_start
+        assert result.iloc[1] == datetime.date(2020, 3, 25)
+
+
+# ---------------------------------------------------------------------------
+# TestFetchAllReleasesChunked
+# ---------------------------------------------------------------------------
+
+
+class TestFetchAllReleasesChunked:
+    """Unit tests for _fetch_all_releases_chunked()."""
+
+    def test_single_chunk_when_range_fits(self):
+        """A range shorter than _VINTAGE_CHUNK_YEARS issues exactly one API call."""
+        fred = MagicMock()
+        fred.get_series_all_releases.return_value = _VINTAGE_DF.copy()
+        result = _fetch_all_releases_chunked(fred, "GDPC1", "2023-01-01", "2023-12-31")
+        assert fred.get_series_all_releases.call_count == 1
+        assert len(result) == len(_VINTAGE_DF)
+
+    def test_multiple_chunks_for_long_range(self):
+        """A range spanning more than _VINTAGE_CHUNK_YEARS issues multiple API calls."""
+        fred = MagicMock()
+        fred.get_series_all_releases.return_value = pd.DataFrame(
+            {"realtime_start": [], "date": [], "value": []}
+        )
+        span_years = _VINTAGE_CHUNK_YEARS * 3
+        start = datetime.date(2000, 1, 1)
+        end = datetime.date(start.year + span_years, 1, 1)
+        _fetch_all_releases_chunked(fred, "DFF", str(start), str(end))
+        assert fred.get_series_all_releases.call_count >= 3
+
+    def test_deduplicates_overlapping_rows(self):
+        """Identical (realtime_start, date) rows from multiple chunks appear once."""
+        fred = MagicMock()
+        fred.get_series_all_releases.return_value = _VINTAGE_DF.copy()
+        result = _fetch_all_releases_chunked(fred, "GDPC1", "2020-01-01", "2026-04-17")
+        assert result.duplicated(subset=["realtime_start", "date"]).sum() == 0
+
+    def test_empty_when_all_chunks_return_nothing(self):
+        fred = MagicMock()
+        fred.get_series_all_releases.return_value = pd.DataFrame()
+        result = _fetch_all_releases_chunked(fred, "GDPC1", "2020-01-01", "2020-12-31")
+        assert result.empty
+
+    def test_chunk_realtime_end_never_exceeds_requested_end(self):
+        """Each chunk's realtime_end kwarg must not exceed the overall end date."""
+        fred = MagicMock()
+        fred.get_series_all_releases.return_value = pd.DataFrame()
+        overall_end = "2021-06-15"
+        _fetch_all_releases_chunked(fred, "DFF", "2020-01-01", overall_end)
+        for call in fred.get_series_all_releases.call_args_list:
+            chunk_end = call.kwargs.get("realtime_end") or call.args[2]
+            assert chunk_end <= overall_end
 
 
 # ---------------------------------------------------------------------------

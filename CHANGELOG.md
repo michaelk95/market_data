@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.6.5] — 2026-04-17 ([#63](https://github.com/michaelk95/market_data/issues/63))
+
+### Fixed
+- `fetch_macro`: chunked `get_series_all_releases` calls into 4-year windows to stay under FRED's 2000-vintage-date-per-request limit (was causing HTTP 400 for DFF and T10Y2Y on bootstrap and long lookback windows).
+- `fetch_macro`: derived `realtime_end` / `valid_to_date` from the vintage chain instead of reading it from the fredapi response (fredapi never returned that column).
+
+---
+
 ## [0.6.4] — 2026-04-16 ([#58](https://github.com/michaelk95/market_data/issues/58))
 
 ### Added
