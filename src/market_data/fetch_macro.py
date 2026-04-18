@@ -112,6 +112,10 @@ SERIES_LOOKBACK_DAYS: dict[str, int] = {
     "PCEPILFE": 400,  # annual BEA comprehensive revisions each July
 }
 _DEFAULT_LOOKBACK_DAYS = 7
+# FRED limits get_series_all_releases to 2000 vintage dates per request. Daily series like DFF
+# accumulate ~140 vintage dates/year, so a full bootstrap from 1990 hits ~5000. Chunk requests
+# into 4-year windows to stay safely under the limit for all series frequencies.
+_VINTAGE_CHUNK_YEARS = 4
 
 # Static FRED release names for default series (best-effort; None for unknowns)
 _SERIES_RELEASE_NAMES: dict[str, str] = {
@@ -133,6 +137,8 @@ _EMPTY_COLS: list[str] = [
     "period_start_date", "period_end_date",
     "report_date", "report_time_marker", "source", "collected_at",
 ]
+
+_FAR_FUTURE = date(9999, 12, 31)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +169,74 @@ def _load_api_key() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Fetch helpers
+# ---------------------------------------------------------------------------
+
+def _derive_realtime_end(df: pd.DataFrame) -> pd.Series:
+    """
+    Reconstruct realtime_end for each vintage row.
+
+    fredapi's get_series_all_releases does not return realtime_end, so we derive
+    it: for each observation date, the realtime_end of vintage N is one day before
+    the realtime_start of vintage N+1. The last vintage for each date gets 9999-12-31.
+    """
+    rs = pd.to_datetime(df["realtime_start"]).dt.date
+    ob = pd.to_datetime(df["date"]).dt.date
+    tmp = pd.DataFrame({"ob": ob, "rs": rs}, index=df.index).sort_values(["ob", "rs"])
+    tmp["next_rs"] = tmp.groupby("ob")["rs"].shift(-1)
+    return (
+        tmp["next_rs"]
+        .apply(lambda d: (d - timedelta(days=1)) if pd.notna(d) else _FAR_FUTURE)
+        .reindex(df.index)
+    )
+
+
+def _fetch_all_releases_chunked(
+    fred: object,
+    series_id: str,
+    realtime_start: str,
+    realtime_end: str,
+) -> pd.DataFrame:
+    """
+    Call get_series_all_releases in 4-year windows to stay under FRED's 2000
+    vintage-date-per-request limit. Results are concatenated and deduplicated.
+    """
+    start = date.fromisoformat(realtime_start)
+    end = date.fromisoformat(realtime_end)
+
+    frames: list[pd.DataFrame] = []
+    chunk_start = start
+    while chunk_start <= end:
+        try:
+            chunk_end = (
+                date(chunk_start.year + _VINTAGE_CHUNK_YEARS, chunk_start.month, chunk_start.day)
+                - timedelta(days=1)
+            )
+        except ValueError:
+            # chunk_start is Feb 29 in a leap year; next same date may not exist
+            chunk_end = date(chunk_start.year + _VINTAGE_CHUNK_YEARS, 2, 28)
+        chunk_end = min(chunk_end, end)
+
+        raw = fred.get_series_all_releases(  # type: ignore[union-attr]
+            series_id,
+            realtime_start=str(chunk_start),
+            realtime_end=str(chunk_end),
+        )
+        if raw is not None and not (hasattr(raw, "empty") and raw.empty):
+            frames.append(raw)
+        chunk_start = chunk_end + timedelta(days=1)
+
+    if not frames:
+        return pd.DataFrame()
+
+    return (
+        pd.concat(frames, ignore_index=True)
+        .drop_duplicates(subset=["realtime_start", "date"])
+        .reset_index(drop=True)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fetch
 # ---------------------------------------------------------------------------
 
@@ -175,8 +249,9 @@ def fetch_series_vintages(
     """
     Pull all vintages of a FRED series from *realtime_start* to today.
 
-    Uses ``get_series_all_releases`` so each row carries the vintage date
-    (``report_date``) and supersession date (``valid_to_date``), enabling
+    Uses ``get_series_all_releases`` (chunked into 4-year windows to stay under
+    FRED's 2000-vintage-date limit) so each row carries the vintage date
+    (``report_date``) and derived supersession date (``valid_to_date``), enabling
     point-in-time queries that are free of look-ahead bias from revisions.
 
     Also populates:
@@ -198,13 +273,11 @@ def fetch_series_vintages(
         ) from exc
 
     fred = fredapi.Fred(api_key=api_key)
-    raw = fred.get_series_all_releases(series_id, realtime_start=realtime_start)
+    df = _fetch_all_releases_chunked(fred, series_id, realtime_start, str(date.today()))
 
-    if raw is None or raw.empty:
+    if df.empty:
         return pd.DataFrame(columns=_EMPTY_COLS)
 
-    # After reset_index(), columns are: realtime_start, realtime_end, date, value
-    df = raw.reset_index()
     df = df.dropna(subset=["value"])
     if df.empty:
         return pd.DataFrame(columns=_EMPTY_COLS)
@@ -212,10 +285,7 @@ def fetch_series_vintages(
     df["period_start_date"] = pd.to_datetime(df["date"]).dt.date
     df["period_end_date"] = df["period_start_date"]
     df["report_date"] = pd.to_datetime(df["realtime_start"]).dt.date
-    # Avoid pd.to_datetime here: it overflows on 9999-12-31 in pandas < 2.0
-    df["valid_to_date"] = df["realtime_end"].apply(
-        lambda d: d if isinstance(d, date) else pd.Timestamp(d).date()
-    )
+    df["valid_to_date"] = _derive_realtime_end(df)
     df["series_id"] = series_id
     df["report_time_marker"] = ReportTimeMarker.POST_MARKET
     df["source"] = DataSource.FRED
