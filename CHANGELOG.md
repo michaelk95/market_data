@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.8.0] — 2026-04-18 ([#68](https://github.com/michaelk95/market_data/pull/68))
+
+### Added
+- `fetch_max_history()` in `fetch.py`: fetches the maximum available OHLCV
+  history for a symbol using yfinance `period="max"`.
+- `fetch_extend_history.py`: one-time backfill that extends all onboarded
+  active tickers back to 1990 (or as far as yfinance has data). For each
+  ticker, checks the earliest date on disk; if it's after 1990-01-01, fetches
+  `period="max"` and merges via `save_ticker_data` (deduplication handled
+  automatically). Tickers already at or before the target are marked complete
+  immediately — no network call. Progress (`extend_history_completed`,
+  `extend_history_failures`) is persisted to `state.json` so runs are safely
+  resumable. Supports `--batch-size` and `--dry-run`. Addresses issue #6.
+- CLI: `market-data-extend-history`
+
+---
+
 ## [0.7.3] — 2026-04-18 ([#63](https://github.com/michaelk95/market_data/issues/63))
 
 ### Fixed

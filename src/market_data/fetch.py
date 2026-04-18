@@ -6,7 +6,9 @@ Core OHLCV fetch and storage logic.
 Functions
 ---------
 fetch_history(symbol, years)        Full historical pull (default 10 years).
+fetch_max_history(symbol)           Full available history via period="max".
 fetch_incremental(symbol, since)    Pull data from a given date onward.
+fetch_date_range(symbol, start, end) Bounded historical pull for a date range.
 save_ticker_data(symbol, df, dir)   Append new rows to per-ticker Parquet,
                                     deduplicating on (date, symbol).
 load_ticker_data(symbol, dir)       Load a per-ticker Parquet (or None).
@@ -96,6 +98,17 @@ def fetch_history(symbol: str, years: int = DEFAULT_HISTORY_YEARS) -> pd.DataFra
     raw = yf.Ticker(symbol).history(
         start=str(start),
         end=str(end),
+        auto_adjust=True,
+        actions=False,
+    )
+    return _normalize(raw, symbol)
+
+
+@yf_retry
+def fetch_max_history(symbol: str) -> pd.DataFrame:
+    """Download the maximum available OHLCV history for *symbol* using period="max"."""
+    raw = yf.Ticker(symbol).history(
+        period="max",
         auto_adjust=True,
         actions=False,
     )

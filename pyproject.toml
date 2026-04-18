@@ -32,6 +32,7 @@ market-data-migrate-macro        = "market_data.migrate_macro:main"
 market-data-fetch-options       = "market_data.fetch_options:main"
 market-data-fetch-constituent-history = "market_data.fetch_constituent_history:main"
 market-data-backfill-constituents     = "market_data.fetch_backfill:main"
+market-data-extend-history            = "market_data.fetch_extend_history:main"
 market-data-health              = "market_data.health:main"
 market-data-smoke-test          = "market_data.smoke_test:main"
 
