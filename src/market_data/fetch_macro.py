@@ -191,6 +191,9 @@ def _derive_realtime_end(df: pd.DataFrame) -> pd.Series:
     )
 
 
+_ALFRED_NOT_FOUND = "does not exist in ALFRED"
+
+
 def _fetch_all_releases_chunked(
     fred: object,
     series_id: str,
@@ -200,11 +203,20 @@ def _fetch_all_releases_chunked(
     """
     Call get_series_all_releases in 4-year windows to stay under FRED's 2000
     vintage-date-per-request limit. Results are concatenated and deduplicated.
+
+    Some series exist in FRED but not in ALFRED (the vintage archive) — either
+    because they are never revised (e.g. daily market rates) or because their
+    ALFRED history starts later than our chunk window. Chunks that return an
+    "does not exist in ALFRED" error are skipped silently; if every chunk fails
+    this way the function falls back to a plain fred.get_series() call, which
+    returns current-only data with a synthetic report_date of today.
     """
     start = date.fromisoformat(realtime_start)
     end = date.fromisoformat(realtime_end)
 
     frames: list[pd.DataFrame] = []
+    total_chunks = 0
+    alfred_skipped = 0
     chunk_start = start
     while chunk_start <= end:
         try:
@@ -217,23 +229,46 @@ def _fetch_all_releases_chunked(
             chunk_end = date(chunk_start.year + _VINTAGE_CHUNK_YEARS, 2, 28)
         chunk_end = min(chunk_end, end)
 
-        raw = fred.get_series_all_releases(  # type: ignore[union-attr]
-            series_id,
-            realtime_start=str(chunk_start),
-            realtime_end=str(chunk_end),
-        )
-        if raw is not None and not (hasattr(raw, "empty") and raw.empty):
-            frames.append(raw)
+        total_chunks += 1
+        try:
+            raw = fred.get_series_all_releases(  # type: ignore[union-attr]
+                series_id,
+                realtime_start=str(chunk_start),
+                realtime_end=str(chunk_end),
+            )
+            if raw is not None and not (hasattr(raw, "empty") and raw.empty):
+                frames.append(raw)
+        except ValueError as exc:
+            if _ALFRED_NOT_FOUND in str(exc):
+                alfred_skipped += 1
+            else:
+                raise
         chunk_start = chunk_end + timedelta(days=1)
 
-    if not frames:
-        return pd.DataFrame()
+    if frames:
+        return (
+            pd.concat(frames, ignore_index=True)
+            .drop_duplicates(subset=["realtime_start", "date"])
+            .reset_index(drop=True)
+        )
 
-    return (
-        pd.concat(frames, ignore_index=True)
-        .drop_duplicates(subset=["realtime_start", "date"])
-        .reset_index(drop=True)
-    )
+    if alfred_skipped == total_chunks:
+        # Series not in ALFRED — fall back to current-only FRED fetch (no revision history)
+        logger.warning(
+            "%s  not in ALFRED; fetching current values only (no vintage/revision history)",
+            series_id,
+        )
+        raw = fred.get_series(series_id, observation_start=realtime_start)  # type: ignore[union-attr]
+        if raw is None or (hasattr(raw, "empty") and raw.empty):
+            return pd.DataFrame()
+        today = date.today()
+        return pd.DataFrame({
+            "realtime_start": today,
+            "date": raw.index,
+            "value": raw.values,
+        })
+
+    return pd.DataFrame()
 
 
 # ---------------------------------------------------------------------------
