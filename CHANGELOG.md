@@ -4,12 +4,24 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.7.0] — 2026-04-16 ([#62](https://github.com/michaelk95/market_data/pull/62))
+
+### Added
+- `tickers.csv` now includes a `date_removed` column. When a ticker drops out of
+  both the Russell 2000 and S&P 500 on a refresh run, `date_removed` is set to
+  that run's date and preserved on all subsequent runs. Active tickers have an
+  empty `date_removed`. This enables point-in-time universe filtering in
+  downstream consumers (e.g. `smelt`'s `ore.universe(as_of)`).
+
+---
+
 ## [0.6.4] — 2026-04-16 ([#58](https://github.com/michaelk95/market_data/issues/58))
 
 ### Added
 - `market_data.version()` returns `{"version": ..., "sha": ...}` for experiment provenance.
 - `market_data.__version__` is a plain string of the installed package version.
 - SHA falls back to `"unknown"` if git is unavailable.
+
 
 ---
 
