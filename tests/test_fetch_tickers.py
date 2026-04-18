@@ -156,6 +156,7 @@ class TestApplyDateAdded:
         )
         result = apply_date_added(new_df, tmp_path / "nonexistent.csv", "2024-01-15")
         assert (result["date_added"] == "2024-01-15").all()
+        assert (result["date_removed"] == "").all()
 
     def test_existing_symbol_preserves_original_date(self, tmp_path):
         existing = pd.DataFrame(
@@ -229,16 +230,71 @@ class TestApplyDateAdded:
         )
         result = apply_date_added(new_df, csv_path, "2024-01-15")
         assert "DROPPED" in result["symbol"].values
+        dropped_row = result[result["symbol"] == "DROPPED"]
+        assert dropped_row["date_removed"].iloc[0] == "2024-01-15"
 
-    def test_backfill_missing_date_added_column(self, tmp_path):
-        """Old CSV without date_added column gets backfilled with '2000-01-01'."""
+    def test_already_dropped_ticker_keeps_date_removed(self, tmp_path):
+        """A ticker dropped in a prior run keeps its original date_removed."""
+        existing = pd.DataFrame(
+            {
+                "symbol": ["AAPL", "DROPPED"],
+                "name": ["Apple", "Dropped Corp"],
+                "market_value": [1_000_000.0, 50_000.0],
+                "index": ["SP500", "SP500"],
+                "date_added": ["2023-01-01", "2022-01-01"],
+                "date_removed": ["", "2024-01-15"],
+            }
+        )
+        csv_path = tmp_path / "tickers.csv"
+        existing.to_csv(csv_path, index=False)
+
+        new_df = pd.DataFrame(
+            {
+                "symbol": ["AAPL"],
+                "name": ["Apple Inc."],
+                "market_value": [1_100_000.0],
+                "index": ["SP500"],
+            }
+        )
+        result = apply_date_added(new_df, csv_path, "2024-06-01")
+        dropped_row = result[result["symbol"] == "DROPPED"]
+        assert dropped_row["date_removed"].iloc[0] == "2024-01-15"
+
+    def test_active_ticker_has_empty_date_removed(self, tmp_path):
+        """Active tickers always have an empty date_removed."""
         existing = pd.DataFrame(
             {
                 "symbol": ["AAPL"],
                 "name": ["Apple"],
                 "market_value": [1_000_000.0],
                 "index": ["SP500"],
-                # no date_added column
+                "date_added": ["2023-01-01"],
+                "date_removed": [""],
+            }
+        )
+        csv_path = tmp_path / "tickers.csv"
+        existing.to_csv(csv_path, index=False)
+
+        new_df = pd.DataFrame(
+            {
+                "symbol": ["AAPL"],
+                "name": ["Apple Inc."],
+                "market_value": [1_100_000.0],
+                "index": ["SP500"],
+            }
+        )
+        result = apply_date_added(new_df, csv_path, "2024-06-01")
+        assert result.loc[result["symbol"] == "AAPL", "date_removed"].iloc[0] == ""
+
+    def test_backfill_missing_date_added_column(self, tmp_path):
+        """Old CSV without date_added or date_removed columns gets backfilled."""
+        existing = pd.DataFrame(
+            {
+                "symbol": ["AAPL"],
+                "name": ["Apple"],
+                "market_value": [1_000_000.0],
+                "index": ["SP500"],
+                # no date_added or date_removed columns
             }
         )
         csv_path = tmp_path / "tickers.csv"
@@ -255,6 +311,7 @@ class TestApplyDateAdded:
         result = apply_date_added(new_df, csv_path, "2024-01-15")
         # AAPL was in old CSV, so it gets the backfilled date, not today
         assert result.loc[result["symbol"] == "AAPL", "date_added"].iloc[0] == "2000-01-01"
+        assert result.loc[result["symbol"] == "AAPL", "date_removed"].iloc[0] == ""
 
     def test_no_duplicate_symbols_in_output(self, tmp_path):
         """The output should not contain duplicate symbols."""

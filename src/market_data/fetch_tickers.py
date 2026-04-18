@@ -180,19 +180,23 @@ def apply_date_added(
     today: str,
 ) -> pd.DataFrame:
     """
-    Assign a date_added column to new_df by merging with an existing tickers.csv.
+    Assign date_added and date_removed columns to new_df by merging with an
+    existing tickers.csv.
 
     Rules:
-    - New tickers (not in existing file) get date_added = today.
-    - Existing tickers keep their original date_added.
-    - Tickers that dropped out of both indices are carried forward unchanged
-      (avoids survivorship bias).
+    - New tickers (not in existing file) get date_added = today, date_removed = "".
+    - Existing active tickers keep their original date_added; date_removed = "".
+    - Tickers that dropped out of both indices are carried forward with their
+      original date_added. date_removed is set to today on the first run that
+      notices them missing; subsequent runs preserve that date.
     - Backward-compat backfill: if existing file has no date_added column,
-      all its rows get "2000-01-01"; if no index column, they get "RUT2000".
+      all its rows get "2000-01-01"; if no index column, they get "RUT2000";
+      if no date_removed column, all rows get "".
     """
     if not existing_path.exists():
         new_df = new_df.copy()
         new_df["date_added"] = today
+        new_df["date_removed"] = ""
         return new_df
 
     existing_df = pd.read_csv(existing_path, dtype=str)
@@ -202,19 +206,28 @@ def apply_date_added(
         existing_df["date_added"] = "2000-01-01"
     if "index" not in existing_df.columns:
         existing_df["index"] = "RUT2000"
+    if "date_removed" not in existing_df.columns:
+        existing_df["date_removed"] = ""
 
-    # Build lookup: symbol -> date_added from existing file
-    known = dict(zip(existing_df["symbol"], existing_df["date_added"]))
+    # Build lookups from existing file
+    known_date_added = dict(zip(existing_df["symbol"], existing_df["date_added"]))
+    dict(zip(existing_df["symbol"], existing_df["date_removed"]))
 
-    # Assign date_added: preserve existing dates, new tickers get today
+    # Active tickers: preserve date_added, clear date_removed
     new_df = new_df.copy()
-    new_df["date_added"] = new_df["symbol"].map(known).fillna(today)
+    new_df["date_added"] = new_df["symbol"].map(known_date_added).fillna(today)
+    new_df["date_removed"] = ""
 
     # Carry forward any tickers that dropped out of both indices
     new_symbols = set(new_df["symbol"])
     dropped = existing_df[~existing_df["symbol"].isin(new_symbols)].copy()
 
     if not dropped.empty:
+        # Set date_removed to today only on the first run that detects the drop;
+        # subsequent runs preserve the original removal date.
+        dropped["date_removed"] = dropped["date_removed"].apply(
+            lambda d: d if d else today
+        )
         # Ensure dropped rows have the same columns as new_df
         for col in new_df.columns:
             if col not in dropped.columns:
@@ -285,7 +298,7 @@ def run(out_path: Path, today: str | None = None) -> pd.DataFrame:
     if result.empty:
         raise ValueError("No tickers after merging — CSV format may have changed.")
 
-    result[["symbol", "name", "market_value", "index", "date_added"]].to_csv(
+    result[["symbol", "name", "market_value", "index", "date_added", "date_removed"]].to_csv(
         out_path, index=False
     )
     return result

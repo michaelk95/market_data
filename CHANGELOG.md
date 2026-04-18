@@ -4,11 +4,23 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.6.5] — 2026-04-17 ([#63](https://github.com/michaelk95/market_data/issues/63))
+## [0.7.1] — 2026-04-17 ([#63](https://github.com/michaelk95/market_data/issues/63))
 
 ### Fixed
 - `fetch_macro`: chunked `get_series_all_releases` calls into 4-year windows to stay under FRED's 2000-vintage-date-per-request limit (was causing HTTP 400 for DFF and T10Y2Y on bootstrap and long lookback windows).
 - `fetch_macro`: derived `realtime_end` / `valid_to_date` from the vintage chain instead of reading it from the fredapi response (fredapi never returned that column).
+
+---
+
+## [0.7.0] — 2026-04-16 ([#62](https://github.com/michaelk95/market_data/pull/62))
+
+### Added
+- `tickers.csv` now includes a `date_removed` column. When a ticker drops out of
+  both the Russell 2000 and S&P 500 on a refresh run, `date_removed` is set to
+  that run's date and preserved on all subsequent runs. Active tickers have an
+  empty `date_removed`. This enables point-in-time universe filtering in
+  downstream consumers (e.g. `smelt`'s `ore.universe(as_of)`).
+
 
 ---
 
@@ -18,6 +30,7 @@ All notable changes to this project will be documented here.
 - `market_data.version()` returns `{"version": ..., "sha": ...}` for experiment provenance.
 - `market_data.__version__` is a plain string of the installed package version.
 - SHA falls back to `"unknown"` if git is unavailable.
+
 
 ---
 
