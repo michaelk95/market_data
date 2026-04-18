@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.8.0] — 2026-04-18 ([#PR](https://github.com/michaelk95/market_data/pull/TODO))
+## [0.8.0] — 2026-04-18 ([#68](https://github.com/michaelk95/market_data/pull/68))
 
 ### Added
 - `fetch_max_history()` in `fetch.py`: fetches the maximum available OHLCV
@@ -18,6 +18,13 @@ All notable changes to this project will be documented here.
   `extend_history_failures`) is persisted to `state.json` so runs are safely
   resumable. Supports `--batch-size` and `--dry-run`. Addresses issue #6.
 - CLI: `market-data-extend-history`
+
+---
+
+## [0.7.3] — 2026-04-18 ([#63](https://github.com/michaelk95/market_data/issues/63))
+
+### Fixed
+- `fetch_macro`: ALFRED chunks that return "does not exist in ALFRED" are now skipped silently, so series whose ALFRED coverage starts after the bootstrap date (e.g. CPILFESL, PCEPI) still collect whatever vintage history is available. If every chunk fails this way, the fetcher falls back to a plain `fred.get_series()` call — these series (e.g. DFF, T10Y2Y) are daily market rates that are never revised, so no vintage history exists and storing current values is correct. Rows fetched via the fallback carry `report_date = today` and `valid_to_date = 9999-12-31`.
 
 ---
 
@@ -47,6 +54,7 @@ All notable changes to this project will be documented here.
 ### Fixed
 - `fetch_macro`: chunked `get_series_all_releases` calls into 4-year windows to stay under FRED's 2000-vintage-date-per-request limit (was causing HTTP 400 for DFF and T10Y2Y on bootstrap and long lookback windows).
 - `fetch_macro`: derived `realtime_end` / `valid_to_date` from the vintage chain instead of reading it from the fredapi response (fredapi never returned that column).
+- `fetch_macro`: ALFRED chunks that return "does not exist in ALFRED" are now skipped silently, so series whose ALFRED coverage starts after the bootstrap date (e.g. CPILFESL, PCEPI) still collect whatever vintage history is available. If every chunk fails this way, the fetcher falls back to a plain `fred.get_series()` call — these series (e.g. DFF, T10Y2Y) are daily market rates that are never revised, so no vintage history exists and storing current values is correct. Rows fetched via the fallback carry `report_date = today` and `valid_to_date = 9999-12-31`.
 
 ---
 

@@ -261,6 +261,39 @@ class TestFetchAllReleasesChunked:
             chunk_end = call.kwargs.get("realtime_end") or call.args[2]
             assert chunk_end <= overall_end
 
+    def test_falls_back_to_get_series_when_all_chunks_not_in_alfred(self):
+        """If every chunk returns 'not in ALFRED', fall back to fred.get_series()."""
+        fred = MagicMock()
+        fred.get_series_all_releases.side_effect = ValueError(
+            "Bad Request.  The series does not exist in ALFRED but may exist in FRED."
+        )
+        fred.get_series.return_value = pd.Series(
+            [1.5, 1.6],
+            index=pd.to_datetime(["2024-01-01", "2024-01-02"]),
+        )
+        result = _fetch_all_releases_chunked(fred, "DFF", "2024-01-01", "2024-01-02")
+        fred.get_series.assert_called_once()
+        assert len(result) == 2
+        assert "realtime_start" in result.columns
+        assert "date" in result.columns
+        assert "value" in result.columns
+
+    def test_skips_alfred_missing_chunks_and_returns_successful_ones(self):
+        """Chunks that return 'not in ALFRED' are skipped; successful chunks are kept."""
+        call_count = 0
+        def side_effect(series_id, realtime_start, realtime_end):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("The series does not exist in ALFRED but may exist in FRED.")
+            return _VINTAGE_DF.copy()
+
+        fred = MagicMock()
+        fred.get_series_all_releases.side_effect = side_effect
+        result = _fetch_all_releases_chunked(fred, "CPILFESL", "2020-01-01", "2028-01-01")
+        assert not result.empty
+        assert fred.get_series.call_count == 0  # fallback not triggered
+
 
 # ---------------------------------------------------------------------------
 # TestUpdateSeries
