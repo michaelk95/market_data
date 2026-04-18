@@ -211,7 +211,7 @@ def apply_date_added(
 
     # Build lookups from existing file
     known_date_added = dict(zip(existing_df["symbol"], existing_df["date_added"]))
-    known_date_removed = dict(zip(existing_df["symbol"], existing_df["date_removed"]))
+    dict(zip(existing_df["symbol"], existing_df["date_removed"]))
 
     # Active tickers: preserve date_added, clear date_removed
     new_df = new_df.copy()
