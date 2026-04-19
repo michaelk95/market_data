@@ -128,6 +128,19 @@ def fetch_fundamentals(symbol: str, today: date | None = None) -> dict | None:
         record[col] = float(raw) if raw is not None else None
 
     # --- EDGAR report_date ---
+    # We attempt to resolve the exact SEC filing date by querying EDGAR for the
+    # most recent 10-K or 10-Q submitted on or before `today`. When EDGAR returns
+    # a filing date, `report_date` is set to that date and `report_date_known=True`,
+    # giving a precise point-in-time anchor: the data was publicly available no
+    # earlier than that filing. When EDGAR has no 10-K/10-Q on record for the
+    # ticker (e.g. ETFs, foreign listings, very small-caps), there is no safe
+    # period-offset heuristic — we do NOT use period_end_date + N days because we
+    # have no period boundary from yfinance to anchor to. Instead we fall back to
+    # `report_date = today` (the collection date) and set `report_date_known=False`
+    # to signal that the timestamp is an upper bound only. Downstream `ore` queries
+    # must treat `report_date_known=False` rows as conservatively available from
+    # the collection date, which avoids look-ahead bias at the cost of using
+    # slightly stale data for tickers that file late.
     filing_date = edgar.get_latest_filing_date(symbol, before=today)
     if filing_date is not None:
         report_date = filing_date
