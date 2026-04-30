@@ -4,6 +4,19 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.9.0] — 2026-04-29 ([#70](https://github.com/michaelk95/market_data/issues/70))
+
+### Added
+- `src/market_data/agent.py`: Claude-powered log-parsing agent that reads
+  `logs/metrics.json` and `state.json`, checks data freshness across all pipeline
+  data types, detects quarantined tickers, high failure rates, and silent failures,
+  then files GitHub issues for confirmed problems via the `gh` CLI.
+- Three agent tools: `read_file`, `list_files`, `create_github_issue`.
+- CLI: `market-data-agent` (accepts `--verbose` / `-v` to print tool calls).
+- `anthropic>=0.50` added as a package dependency.
+
+---
+
 ## [0.8.0] — 2026-04-18 ([#68](https://github.com/michaelk95/market_data/pull/68))
 
 ### Added
