@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market_data"
-version = "0.2.4"
+version = "0.9.0"
 description = "Market data collector for the paper_trading backtest engine."
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ dependencies = [
   "python-dotenv>=1.0",
   "pyyaml>=6.0",
   "tenacity>=8.2",
+  "anthropic>=0.50",
 ]
 
 [project.scripts]
@@ -35,6 +36,7 @@ market-data-backfill-constituents     = "market_data.fetch_backfill:main"
 market-data-extend-history            = "market_data.fetch_extend_history:main"
 market-data-health              = "market_data.health:main"
 market-data-smoke-test          = "market_data.smoke_test:main"
+market-data-agent               = "market_data.agent:main"
 
 [project.optional-dependencies]
 dev = [
