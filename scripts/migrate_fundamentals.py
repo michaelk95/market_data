@@ -14,10 +14,10 @@ For each historical row the migration:
 
 Usage
 -----
-    market-data-migrate-fundamentals               # migrate all, keep old files
-    market-data-migrate-fundamentals --backup      # rename old files to .bak
-    market-data-migrate-fundamentals --dry-run     # report counts, write nothing
-    market-data-migrate-fundamentals --symbols AAPL MSFT  # specific tickers only
+    python scripts/migrate_fundamentals.py               # migrate all, keep old files
+    python scripts/migrate_fundamentals.py --backup      # rename old files to .bak
+    python scripts/migrate_fundamentals.py --dry-run     # report counts, write nothing
+    python scripts/migrate_fundamentals.py --symbols AAPL MSFT  # specific tickers only
 """
 
 from __future__ import annotations

@@ -10,11 +10,11 @@ from FRED's realtime API (get_series_all_releases) starting from DEFAULT_START.
 
 Usage
 -----
-    market-data-migrate-macro               # migrate all default series
-    market-data-migrate-macro --backup      # rename old files to .bak
-    market-data-migrate-macro --dry-run     # report counts, write nothing
-    market-data-migrate-macro --series DFF T10Y2Y  # specific series only
-    market-data-migrate-macro --start 1990-01-01   # custom bootstrap start
+    python scripts/migrate_macro.py               # migrate all default series
+    python scripts/migrate_macro.py --backup      # rename old files to .bak
+    python scripts/migrate_macro.py --dry-run     # report counts, write nothing
+    python scripts/migrate_macro.py --series DFF T10Y2Y  # specific series only
+    python scripts/migrate_macro.py --start 1990-01-01   # custom bootstrap start
 """
 
 from __future__ import annotations

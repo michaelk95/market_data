@@ -22,7 +22,7 @@ Exit codes
 
 Usage
 -----
-    market-data-smoke-test
+    python scripts/smoke_test.py
 """
 
 from __future__ import annotations
