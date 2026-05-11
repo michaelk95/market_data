@@ -3,6 +3,11 @@ Shared pytest fixtures for the market_data test suite.
 All fixtures reflect the real production schemas used in the pipeline.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
 from datetime import date
 
 import pandas as pd
