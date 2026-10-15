@@ -14,6 +14,7 @@ from pathlib import Path
 
 import migrate_flat_tables
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -100,10 +101,17 @@ def _flat_files(table_dir: Path) -> list[str]:
     return sorted(p.name for p in table_dir.glob("*.parquet"))
 
 
+def _normalize_type(t: pa.DataType) -> pa.DataType:
+    # pandas 3 writes str columns as large_string; on disk it is the same
+    # Parquet BYTE_ARRAY/UTF8 column as string, and the existing fundamentals
+    # and macro tables already store it that way.
+    return pa.string() if t == pa.large_string() else t
+
+
 def _assert_matches_schema(path: Path, table: str) -> None:
     actual = pq.read_schema(path).remove_metadata()
     expected = TABLE_SCHEMAS[table]
-    actual_types = {f.name: f.type for f in actual}
+    actual_types = {f.name: _normalize_type(f.type) for f in actual}
     expected_types = {f.name: f.type for f in expected}
     assert actual_types == expected_types
 
