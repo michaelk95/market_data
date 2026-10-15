@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.0] — 2026-10-15 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.10.0] — 2026-10-15 ([#75](https://github.com/michaelk95/market_data/pull/75))
 
 ### Added
 - `scripts/migrate_flat_tables.py` (MD-09): one-shot migration of the flat
