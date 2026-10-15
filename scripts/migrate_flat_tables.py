@@ -22,6 +22,9 @@ Column mapping
   freshness checks stay honest.
 - Values are cast to ``schema.TABLE_SCHEMAS`` (e.g. ``volume`` int64 → float64).
 
+Files whose ``symbol`` column is not exactly their file name are skipped with a
+warning (the live ``data/ohlcv`` holds a stale multi-symbol ``merged.parquet``).
+
 The flat files are left in place, and re-running is safe: rows already in the
 table are deduplicated by ``write_table``, so a re-run picks up only rows the
 old collector added since the last run.
@@ -134,6 +137,12 @@ def _load_chunk(files: list[Path], table: str) -> pd.DataFrame:
             logger.error("%s  failed to read: %s", path.name, exc)
             continue
         if flat.empty:
+            continue
+        # A per-symbol file holds exactly its own symbol. Anything else (e.g. a
+        # stale merge.py output saved as ohlcv/merged.parquet) is not collector
+        # data and could overwrite real rows in dedup.
+        if set(flat["symbol"].unique()) != {path.stem}:
+            logger.warning("%s  skipped: symbol column does not match the file name", path.name)
             continue
         frames.append(to_bitemporal(flat, table, _file_mtime(path)))
     if not frames:
