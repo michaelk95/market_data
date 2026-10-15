@@ -234,6 +234,24 @@ class TestMigrateOhlcv:
         assert len(df) == 8
         assert datetime.date(2030, 1, 2) not in set(df["period_start_date"])
 
+    @pytest.mark.parametrize("name", ["merged.parquet", "0_stale.parquet"])
+    def test_skips_files_not_named_for_their_symbol(self, flat_data: Path, name: str) -> None:
+        """The live ohlcv dir holds a stale multi-symbol merge.py output.
+
+        Its rows must not be migrated, whether it sorts before or after the
+        ticker files (sorting first would let its stale prices win dedup).
+        """
+        before = _flat_ohlcv("AAPL", [datetime.date(2024, 1, 2)], start=999.0)
+        stray = pd.concat([before, _flat_ohlcv("ZZZ", [datetime.date(2024, 1, 2)])], ignore_index=True)
+        _write_flat(flat_data / "ohlcv" / name, stray)
+
+        written = migrate_flat_tables.run("ohlcv", flat_data)
+
+        df = read_table("ohlcv", flat_data)
+        assert written == 8
+        assert set(df["symbol"]) == {"AAPL", "MSFT"}
+        assert (df["close"] < 999.0).all()
+
     def test_no_flat_files_is_a_noop(self, tmp_path: Path) -> None:
         assert migrate_flat_tables.run("ohlcv", tmp_path) == 0
 
