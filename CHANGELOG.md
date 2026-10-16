@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.0] — 2026-10-15 ([#75](https://github.com/michaelk95/market_data/pull/75))
+
+### Added
+- `scripts/migrate_flat_tables.py` (MD-09): one-shot migration of the flat
+  per-symbol `ohlcv`, `indices` and `options` files into the bitemporal layout
+  read by `storage.read_table` (`ohlcv`/`options` partitioned by year,
+  `indices` as a single `data.parquet`). `date`/`snapshot_date` becomes
+  `period_start_date`/`period_end_date`/`report_date`; `report_time_marker` is
+  `post-market` for daily bars and `pre-market` for options; `collected_at` is
+  the flat file's mtime; values are cast to `TABLE_SCHEMAS`. Writes in chunks
+  (`--chunk-size`), supports `--symbols`, `--dry-run` and `--data-dir`, leaves
+  the flat files in place, and is safe to re-run (picks up rows added since the
+  last run). Files whose `symbol` column does not match the file name, such as
+  the stale `data/ohlcv/merged.parquet`, are skipped with a warning.
+
+---
+
 ## [0.9.1] — 2026-05-10 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
 
 ### Changed
