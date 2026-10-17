@@ -9,6 +9,7 @@ import pandas as pd
 
 from market_data.fetch_fundamentals import fetch_fundamentals, run
 from market_data.schema import validate_bitemporal_columns
+from market_data.storage import read_table
 
 
 # ---------------------------------------------------------------------------
@@ -46,20 +47,31 @@ class TestFetchFundamentals:
 
     @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
     @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
-    def test_uses_edgar_date_as_report_date(self, _mock_info, _mock_edgar):
-        record = fetch_fundamentals("AAPL", today=_TODAY)
-        assert record["report_date"] == _EDGAR_DATE
-        assert record["period_start_date"] == _EDGAR_DATE
-        assert record["period_end_date"] == _EDGAR_DATE
-        assert record["report_date_known"] is True
-
-    @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=None)
-    @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
-    def test_falls_back_to_today_when_no_edgar_date(self, _mock_info, _mock_edgar):
+    def test_report_date_is_collection_date_not_filing_date(self, _mock_info, _mock_edgar):
+        # The .info values (market cap, P/E, ...) are a snapshot taken today, so
+        # they must not be visible before today even though the last 10-K/10-Q
+        # was filed earlier.
         record = fetch_fundamentals("AAPL", today=_TODAY)
         assert record["report_date"] == _TODAY
         assert record["period_start_date"] == _TODAY
-        assert record["report_date_known"] is False
+        assert record["period_end_date"] == _TODAY
+        assert record["report_date_known"] is True
+
+    @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
+    @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
+    def test_edgar_date_stored_as_last_filing_date(self, _mock_info, _mock_edgar):
+        record = fetch_fundamentals("AAPL", today=_TODAY)
+        assert record["last_filing_date"] == _EDGAR_DATE
+        _mock_edgar.assert_called_once_with("AAPL", before=_TODAY)
+
+    @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=None)
+    @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
+    def test_no_edgar_date_leaves_last_filing_date_empty(self, _mock_info, _mock_edgar):
+        record = fetch_fundamentals("AAPL", today=_TODAY)
+        assert record["report_date"] == _TODAY
+        assert record["period_start_date"] == _TODAY
+        assert record["last_filing_date"] is None
+        assert record["report_date_known"] is True
 
     @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=None)
     @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value={"marketCap": 0})
@@ -154,5 +166,23 @@ class TestRun:
     @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
     def test_run_uses_year_partitioned_layout(self, _mock_info, _mock_edgar, _mock_sleep, tmp_path):
         run(["AAPL"], data_dir=tmp_path)
-        year = _EDGAR_DATE.year
+        year = date.today().year
         assert (tmp_path / "fundamentals" / f"year={year}" / "data.parquet").exists()
+
+    @patch("market_data.fetch_fundamentals.time.sleep")
+    @patch("market_data.fetch_fundamentals.edgar.get_latest_filing_date", return_value=_EDGAR_DATE)
+    @patch("market_data.fetch_fundamentals._fetch_ticker_info", return_value=_FULL_INFO)
+    def test_snapshots_on_different_days_with_same_filing_both_persist(
+        self, _mock_info, _mock_edgar, _mock_sleep, tmp_path
+    ):
+        # Regression: rows used to be keyed on the filing date, so a monthly
+        # snapshot taken before the next 10-Q was silently dropped as a duplicate.
+        with patch("market_data.fetch_fundamentals.date") as mock_date:
+            mock_date.today.return_value = date(2024, 2, 1)
+            assert run(["AAPL"], data_dir=tmp_path) == 1
+            mock_date.today.return_value = date(2024, 3, 1)
+            assert run(["AAPL"], data_dir=tmp_path) == 1
+
+        df = read_table("fundamentals", tmp_path, symbols=["AAPL"])
+        assert sorted(df["report_date"]) == [date(2024, 2, 1), date(2024, 3, 1)]
+        assert list(df["last_filing_date"]) == [_EDGAR_DATE, _EDGAR_DATE]
