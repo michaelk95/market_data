@@ -69,6 +69,12 @@ class TestRepairFrame:
         assert out["last_filing_date"] == date(2026, 7, 31)
         assert bool(out["report_date_known"]) is True
 
+    def test_filing_on_collection_day_is_kept_as_last_filing_date(self):
+        df = pd.DataFrame([_row("AAPL", date(2026, 8, 18), _utc(2026, 8, 18))])
+        out = repair.repair_frame(df, _NO_BAK).iloc[0]
+        assert out["report_date"] == date(2026, 8, 18)
+        assert out["last_filing_date"] == date(2026, 8, 18)
+
     def test_unknown_row_keeps_collection_date_and_has_no_filing_date(self):
         df = pd.DataFrame([_row("ETF", date(2026, 8, 18), _utc(2026, 8, 18), known=False)])
         out = repair.repair_frame(df, _NO_BAK).iloc[0]
@@ -100,6 +106,17 @@ class TestRepairFrame:
         bak = pd.DataFrame([_bak("AAMI", date(2026, 4, 5))])
         out = repair.repair_frame(df, bak).sort_values("report_date")
         assert list(out["report_date"]) == [date(2026, 4, 5), date(2026, 6, 4)]
+
+    def test_bak_dates_only_the_earliest_matching_row(self):
+        # A stale quote can repeat the exact .bak values in later snapshots;
+        # those are later snapshots, not the migrated row.
+        df = pd.DataFrame([
+            _row("SWKH", date(2026, 2, 27), _utc(2026, 4, 16, 3)),
+            _row("SWKH", date(2026, 3, 31), _utc(2026, 5, 5)),
+        ])
+        bak = pd.DataFrame([_bak("SWKH", date(2026, 4, 5))])
+        out = repair.repair_frame(df, bak).sort_values("report_date")
+        assert list(out["report_date"]) == [date(2026, 4, 5), date(2026, 5, 5)]
 
     def test_bak_never_moves_a_row_later_than_collection(self):
         # A .bak as_of after the collection date can't be the snapshot date.

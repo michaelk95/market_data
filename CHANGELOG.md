@@ -4,6 +4,36 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.1] — 2026-10-17 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+
+### Fixed
+- Point-in-time lookahead in the `fundamentals` table: `fetch_fundamentals.py`
+  and `scripts/migrate_fundamentals.py` set `report_date` (and
+  `period_start_date`/`period_end_date`) to the latest EDGAR 10-K/10-Q filing
+  date with `report_date_known=True`, although the values are a yfinance
+  `.info` snapshot (market cap, P/E, ...) taken later. Point-in-time readers
+  saw snapshot values months or years before they existed. `report_date` is
+  now the snapshot (collection) date, with `report_date_known=True`.
+- Snapshots silently dropped: rows were deduplicated on
+  `(symbol, period_start_date)` with `period_start_date` = filing date, so a
+  monthly snapshot taken before the ticker's next filing was discarded as a
+  duplicate (e.g. the 2026-09-23 run fetched ~2,400 tickers and saved 249).
+  Keying on the snapshot date keeps every snapshot from now on; lost ones
+  cannot be recovered.
+
+### Added
+- `last_filing_date` (date32, nullable) column in `FUNDAMENTALS_SCHEMA`: the
+  latest 10-K/10-Q filing on or before the snapshot, informational only.
+- `scripts/repair_fundamentals_pit.py`: one-shot repair of existing rows. Moves
+  each row to its snapshot date (the `as_of` of the matching
+  `fundamentals/*.parquet.bak` row for migrated rows, otherwise the
+  `collected_at` date), keeps the old filing date as `last_filing_date`,
+  checks keys are unique and no row is dated before its snapshot, backs up the
+  old partitions and rewrites the table. Dry run unless `--apply`; safe to
+  re-run.
+
+---
+
 ## [0.10.0] — 2026-10-15 ([#75](https://github.com/michaelk95/market_data/pull/75))
 
 ### Added
