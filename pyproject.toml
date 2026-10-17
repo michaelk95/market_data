@@ -41,7 +41,7 @@ dev = [
   "pytest-mock>=3.14",
   "pytest-cov>=5.0",
   "responses>=0.25",
-  "ruff>=0.4",
+  "ruff>=0.15,<0.16",  # 0.16+ enables rules the codebase is not yet clean against
 ]
 
 [tool.setuptools.packages.find]

@@ -20,6 +20,9 @@ All notable changes to this project will be documented here.
   duplicate (e.g. the 2026-09-23 run fetched ~2,400 tickers and saved 249).
   Keying on the snapshot date keeps every snapshot from now on; lost ones
   cannot be recovered.
+- CI lint failing on every branch: `ruff>=0.4` resolved to 0.17.1, which
+  flags ~90 existing issues. The dev dependency is pinned to `ruff>=0.15,<0.16`
+  (the version the code is linted with) until that lint debt is cleaned up.
 
 ### Added
 - `last_filing_date` (date32, nullable) column in `FUNDAMENTALS_SCHEMA`: the
