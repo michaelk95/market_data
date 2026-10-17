@@ -138,8 +138,8 @@ def run(
                 dry_run=dry_run,
                 data_dir=data_dir,
             )
-        except Exception as exc:
-            logger.error("  %s  ERROR: %s", series_id, exc, exc_info=True)
+        except Exception:
+            logger.exception("  %s  ERROR", series_id)
             written = 0
 
         total_written += written
@@ -162,7 +162,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

@@ -127,7 +127,7 @@ def run(out_path: Path) -> pd.DataFrame:
 
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(
@@ -153,8 +153,8 @@ def main() -> None:
 
     try:
         run(out_path)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to fetch constituent history: %s", exc, exc_info=True)
+    except Exception:
+        logger.exception("Failed to fetch constituent history")
         sys.exit(1)
 
 

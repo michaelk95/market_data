@@ -256,7 +256,7 @@ def _inject_etf_rows(df: pd.DataFrame) -> pd.DataFrame:
     operation).  NaN values sort to the bottom of tickers.csv, keeping the
     constituent stocks at the top.
     """
-    from market_data.etf_config import SECTOR_ETFS, BROAD_ETFS  # noqa: PLC0415
+    from market_data.etf_config import BROAD_ETFS, SECTOR_ETFS
 
     existing_symbols: set[str] = set(df["symbol"].dropna())
 
@@ -305,7 +305,7 @@ def run(out_path: Path, today: str | None = None) -> pd.DataFrame:
 
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(
@@ -322,8 +322,8 @@ def main() -> None:
 
     try:
         tickers = run(out_path)
-    except requests.RequestException as exc:
-        logger.error("Failed to download ETF holdings: %s", exc, exc_info=True)
+    except requests.RequestException:
+        logger.exception("Failed to download ETF holdings")
         sys.exit(1)
 
     counts = tickers["index"].value_counts()

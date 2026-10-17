@@ -13,7 +13,6 @@ import pytest
 
 from market_data.verify_onboarding import check, fix
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -52,7 +51,7 @@ class TestCheck:
         state_file = _make_state(tmp_path, ["AAPL", "GHOST"])
         data_dir = _make_data_dir(tmp_path, ["AAPL"])
 
-        ghosts, orphans = check(state_file, data_dir)
+        ghosts, _orphans = check(state_file, data_dir)
         assert "GHOST" in ghosts
         assert "AAPL" not in ghosts
 
@@ -61,7 +60,7 @@ class TestCheck:
         state_file = _make_state(tmp_path, ["AAPL"])
         data_dir = _make_data_dir(tmp_path, ["AAPL", "ORPHAN"])
 
-        ghosts, orphans = check(state_file, data_dir)
+        _ghosts, orphans = check(state_file, data_dir)
         assert "ORPHAN" in orphans
         assert "AAPL" not in orphans
 

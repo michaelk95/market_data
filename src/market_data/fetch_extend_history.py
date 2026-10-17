@@ -260,7 +260,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(
@@ -287,8 +287,8 @@ def main() -> None:
 
     try:
         run(batch_size=args.batch_size, dry_run=args.dry_run)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Extend-history failed: %s", exc, exc_info=True)
+    except Exception:
+        logger.exception("Extend-history failed")
         sys.exit(1)
 
 

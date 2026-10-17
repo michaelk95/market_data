@@ -54,10 +54,14 @@ from pathlib import Path
 
 import pandas as pd
 
+from market_data import metrics, resilience
 from market_data.config import cfg as _cfg
-from market_data.fetch import DEFAULT_HISTORY_YEARS, fetch_history, fetch_incremental, save_ticker_data
-from market_data import metrics
-from market_data import resilience
+from market_data.fetch import (
+    DEFAULT_HISTORY_YEARS,
+    fetch_history,
+    fetch_incremental,
+    save_ticker_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +139,7 @@ def maybe_refresh_tickers(
 
     logger.info("Refreshing ticker list (last refresh: %s)...", last_raw or "never")
     try:
-        from market_data import fetch_tickers  # noqa: PLC0415
+        from market_data import fetch_tickers
         fetch_tickers.run(tickers_path, today=today.isoformat())
         logger.info("Ticker list refreshed successfully.")
         return True
@@ -174,7 +178,7 @@ def maybe_run_fundamentals(
 
     # ETFs are fund wrappers — their yfinance .info fields don't map to the
     # equity fundamentals schema (no P/E, margins, analyst targets, etc.).
-    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    from market_data.etf_config import ALL_ETFS
     symbols = sorted(s for s in onboarded if s not in ALL_ETFS)
     logger.info(
         "Fetching fundamentals for %d tickers (last run: %s)...",
@@ -182,7 +186,7 @@ def maybe_run_fundamentals(
         last_raw or "never",
     )
     try:
-        from market_data import fetch_fundamentals  # noqa: PLC0415
+        from market_data import fetch_fundamentals
         metrics.start_run("fundamentals")
         fetch_fundamentals.run(symbols=symbols)
         for s in symbols:
@@ -206,8 +210,8 @@ def step_analyst_estimates(onboarded: set[str]) -> None:
     ETFs are excluded (no meaningful analyst price targets for fund wrappers).
     Failures are non-fatal and logged as warnings.
     """
-    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
-    from market_data import fetch_analyst_estimates  # noqa: PLC0415
+    from market_data import fetch_analyst_estimates
+    from market_data.etf_config import ALL_ETFS
 
     symbols = sorted(s for s in onboarded if s not in ALL_ETFS)
     logger.info("ANALYST-ESTIMATES  %d tickers", len(symbols))
@@ -236,7 +240,7 @@ def step_options(
     Returns the updated set of tickers covered in the current cycle so the
     caller can persist it to state.json.
     """
-    from market_data import fetch_options  # noqa: PLC0415
+    from market_data import fetch_options
 
     sp500 = fetch_options.get_sp500_symbols(onboarded)
     etfs = fetch_options.get_etf_symbols(onboarded)
@@ -275,7 +279,7 @@ def step_options(
 
     # Silent failure detection: warn if all symbols produced no options data
     if batch:
-        from market_data.fetch_options import OPTIONS_DIR  # noqa: PLC0415
+        from market_data.fetch_options import OPTIONS_DIR
         for s in batch:
             wrote = (OPTIONS_DIR / f"{s}.parquet").exists()
             metrics.record_symbol_result(s, success=wrote, reason="no options file written" if not wrote else None)
@@ -363,7 +367,7 @@ def step_onboard(
                 logger.info("%s  %d rows saved", prefix, added)
                 metrics.record_symbol_result(symbol, success=True, rows_written=added)
         except Exception as exc:
-            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
+            logger.exception("%s  ERROR", prefix)
             failed.add(symbol)
             resilience.record_failure(state, symbol, str(exc))
             metrics.record_symbol_result(symbol, success=False, reason=str(exc))
@@ -417,7 +421,7 @@ def step_update(
                 metrics.record_symbol_result(symbol, success=True, rows_written=added)
             resilience.clear_failure(state, symbol)
         except Exception as exc:
-            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
+            logger.exception("%s  ERROR", prefix)
             results[symbol] = 0
             resilience.record_failure(state, symbol, str(exc))
             metrics.record_symbol_result(symbol, success=False, reason=str(exc))
@@ -484,7 +488,7 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
     # ETFs sit at the bottom of tickers.csv (NaN market_value sorts last) so
     # without this pre-pass they would wait until all ~1,500 stock tickers are
     # onboarded.  There are at most 19 ETFs, so this adds <2 minutes once.
-    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    from market_data.etf_config import ALL_ETFS
     quarantined_set = set(quarantined)
     etf_pending = [
         t for t in ALL_ETFS
@@ -535,14 +539,14 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
 
     # --- 5. Optional indices update ---
     if run_indices:
-        from market_data import fetch_indices  # noqa: PLC0415
+        from market_data import fetch_indices
         metrics.start_run("indices")
         fetch_indices.run()
         metrics.finish_run()
 
     # --- 6. Optional macro update ---
     if run_macro:
-        from market_data import fetch_macro  # noqa: PLC0415
+        from market_data import fetch_macro
         metrics.start_run("macro")
         fetch_macro.run()
         metrics.finish_run()
@@ -583,12 +587,12 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
 
     # --- 9. Optional merge ---
     if run_merge:
-        from market_data import merge  # noqa: PLC0415
+        from market_data import merge
         merge.run(DATA_DIR)
 
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

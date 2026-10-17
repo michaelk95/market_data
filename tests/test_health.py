@@ -15,7 +15,6 @@ import pandas as pd
 
 from market_data.health import health_check
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ def _single_type_dir(tmp_path: Path, data_type: str, age_days: float) -> Path:
 # ---------------------------------------------------------------------------
 
 class TestReportStructure:
-    EXPECTED_KEYS = {"last_updated", "expected_within_days", "is_stale", "age_days"}
+    EXPECTED_KEYS = frozenset({"last_updated", "expected_within_days", "is_stale", "age_days"})
 
     def test_all_four_data_types_present(self, tmp_path):
         root = tmp_path / "data"

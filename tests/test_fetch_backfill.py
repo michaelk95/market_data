@@ -16,7 +16,6 @@ import pytest
 
 from market_data.fetch_backfill import pending_tickers, run
 
-
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------

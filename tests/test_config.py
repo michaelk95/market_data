@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -282,7 +281,10 @@ class TestModuleConstants:
         assert FUNDAMENTALS_REFRESH_DAYS == 30
 
     def test_orchestrator_options_defaults(self):
-        from market_data.orchestrator import DEFAULT_MAX_EXPIRIES, DEFAULT_OPTIONS_BATCH_SIZE
+        from market_data.orchestrator import (
+            DEFAULT_MAX_EXPIRIES,
+            DEFAULT_OPTIONS_BATCH_SIZE,
+        )
         assert DEFAULT_OPTIONS_BATCH_SIZE == 50
         assert DEFAULT_MAX_EXPIRIES == 4
 

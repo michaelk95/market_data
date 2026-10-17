@@ -10,7 +10,6 @@ import pandas as pd
 from market_data.fetch_analyst_estimates import fetch_analyst_estimates, run
 from market_data.schema import validate_bitemporal_columns
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

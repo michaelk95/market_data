@@ -75,7 +75,7 @@ class TestBitemporalColumns:
 
 
 class TestTableSchemas:
-    expected_tables = {"ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"}
+    expected_tables = frozenset({"ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"})
 
     def test_all_tables_present(self):
         assert set(TABLE_SCHEMAS) == self.expected_tables
@@ -144,7 +144,7 @@ class TestTableSchemas:
 
 
 class TestLookupDictionaries:
-    all_tables = {"ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"}
+    all_tables = frozenset({"ohlcv", "indices", "fundamentals", "macro", "options", "analyst_estimates"})
 
     def test_dedup_keys_covers_all_tables(self):
         assert set(DEDUP_KEYS) == self.all_tables
