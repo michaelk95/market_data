@@ -28,8 +28,10 @@ the whole table is rewritten rather than merged through `storage.write_table`.
 Before writing it checks that `(symbol, period_start_date)` is unique and that
 no `report_date` is before the snapshot date, and copies the old partitions to
 `<data_dir>/fundamentals_pit_backup_<timestamp>/`. Safe to re-run: rows that
-are already on their snapshot date are left alone. Do not run it while the
-daily collector is writing.
+are already on their snapshot date are left alone. Keep the `.bak` files until
+the final run: without them a re-run moves the migrated rows from their `as_of`
+to their (later) collection date, which is still never early but changes data.
+Do not run it while the daily collector is writing.
 
 Usage
 -----
