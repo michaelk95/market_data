@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.2] — 2026-10-17 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.10.2] — 2026-10-17 ([#77](https://github.com/michaelk95/market_data/pull/77))
 
 ### Fixed
 - Scripts in `scripts/` logged nothing: they used `logging.getLogger(__name__)`,
