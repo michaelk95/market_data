@@ -50,7 +50,7 @@ from market_data.config import cfg as _cfg
 from market_data.schema import TABLE_SCHEMAS, DataSource, ReportTimeMarker
 from market_data.storage import write_table
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("market_data.migrate_flat_tables")
 
 DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 DEFAULT_CHUNK_SIZE = 250

@@ -27,7 +27,7 @@ from market_data.config import cfg as _cfg
 from market_data.fetch_macro import DEFAULT_START, _load_api_key, fetch_series_vintages
 from market_data.storage import write_table
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("market_data.migrate_macro")
 
 DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 

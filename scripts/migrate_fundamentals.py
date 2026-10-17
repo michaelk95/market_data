@@ -36,7 +36,7 @@ from market_data.fetch_fundamentals import INFO_FIELDS
 from market_data.schema import DataSource, ReportTimeMarker
 from market_data.storage import write_table
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("market_data.migrate_fundamentals")
 
 DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 SLEEP_BETWEEN_EDGAR_CALLS: float = 0.15  # stay well under 10 req/s
