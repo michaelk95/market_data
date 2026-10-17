@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.2] — 2026-10-17 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.10.2] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
 
 ### Changed
 - Dev dependency `ruff` raised from `>=0.15,<0.16` to `>=0.17.1,<0.18`, and
