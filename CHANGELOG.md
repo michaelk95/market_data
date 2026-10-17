@@ -4,6 +4,17 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.2] — 2026-10-17 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+
+### Fixed
+- Scripts in `scripts/` logged nothing: they used `logging.getLogger(__name__)`,
+  which is `__main__` when run directly, while `setup_logging()` only attaches
+  handlers to the `market_data` logger. Each script now logs under
+  `market_data.<script_name>`, and `tests/test_script_logging.py` checks that
+  every script's records reach the configured handlers.
+
+---
+
 ## [0.10.1] — 2026-10-17 ([#76](https://github.com/michaelk95/market_data/pull/76))
 
 ### Fixed
