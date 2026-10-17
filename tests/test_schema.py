@@ -108,6 +108,10 @@ class TestTableSchemas:
         for col in ("analyst_target_mean", "analyst_recommendation", "analyst_count"):
             assert col not in names
 
+    def test_fundamentals_has_last_filing_date(self):
+        field = TABLE_SCHEMAS["fundamentals"].field("last_filing_date")
+        assert field.type == pa.date32()
+
     def test_macro_has_series_id_and_value(self):
         names = TABLE_SCHEMAS["macro"].names
         assert "series_id" in names

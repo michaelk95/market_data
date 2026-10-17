@@ -94,6 +94,9 @@ FUNDAMENTALS_SCHEMA = pa.schema([
     pa.field("total_revenue", pa.float64()),
     pa.field("profit_margin", pa.float64()),
     pa.field("report_date_known", pa.bool_()),
+    # Latest 10-K/10-Q filing on or before the snapshot (informational only:
+    # report_date is the snapshot date, since the values are an .info snapshot).
+    pa.field("last_filing_date", pa.date32()),
     *_BITEMPORAL_FIELDS,
 ])
 

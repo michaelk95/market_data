@@ -6,11 +6,11 @@ One-shot migration: convert existing per-ticker fundamentals Parquet files
 bitemporal layout (data/fundamentals/year=YYYY/data.parquet).
 
 For each historical row the migration:
-  1. Looks up the most recent 10-K/10-Q EDGAR filing date on or before the
-     row's `as_of` date.
-  2. Uses that as `report_date` (and `period_start_date`/`period_end_date`).
-  3. Sets `report_date_known=True`; falls back to `as_of` with
-     `report_date_known=False` when no EDGAR date is available.
+  1. Uses the snapshot's `as_of` date as `report_date` (and
+     `period_start_date`/`period_end_date`) with `report_date_known=True`:
+     the values were not knowable before the snapshot was taken.
+  2. Looks up the most recent 10-K/10-Q EDGAR filing date on or before
+     `as_of` and stores it as `last_filing_date` (None if EDGAR has none).
 
 Usage
 -----
@@ -88,7 +88,7 @@ def _migrate_ticker(
     for _, row in old_df.iterrows():
         as_of: date = row["as_of"] if isinstance(row["as_of"], date) else pd.to_datetime(row["as_of"]).date()
 
-        # Try to get EDGAR filing date
+        # Informational only: report_date stays the snapshot date (see fetch_fundamentals).
         try:
             filing_date = edgar.get_latest_filing_date(symbol, before=as_of)
             time.sleep(SLEEP_BETWEEN_EDGAR_CALLS)
@@ -97,12 +97,8 @@ def _migrate_ticker(
             filing_date = None
 
         if filing_date is not None:
-            report_date = filing_date
-            report_date_known = True
             edgar_hits += 1
-        else:
-            report_date = as_of
-            report_date_known = False
+        report_date = as_of
 
         record: dict = {"symbol": symbol}
         for col in INFO_FIELDS:
@@ -114,7 +110,8 @@ def _migrate_ticker(
             else:
                 record[col] = float(val) if pd.notna(val) and val is not None else None
 
-        record["report_date_known"] = report_date_known
+        record["report_date_known"] = True
+        record["last_filing_date"] = filing_date
         record.update({
             "period_start_date":  report_date,
             "period_end_date":    report_date,
@@ -214,7 +211,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Migrate existing per-ticker fundamentals parquets to the bitemporal "
-            "storage layout, backfilling SEC EDGAR filing dates as report_date."
+            "storage layout, recording SEC EDGAR filing dates as last_filing_date."
         )
     )
     parser.add_argument(

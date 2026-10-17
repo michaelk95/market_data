@@ -7,11 +7,11 @@ Each run appends one row per ticker to the unified fundamentals table
 (data/fundamentals/year=YYYY/data.parquet) using the bitemporal schema
 defined in schema.py.
 
-The `report_date` for each snapshot is the most recent 10-K or 10-Q
-filing date from SEC EDGAR — the official submission date when the data
-became publicly available.  When EDGAR has no record for a ticker the
-collection date is used as a fallback and `report_date_known` is set
-to False.
+The `report_date` for each snapshot is the collection date: the values are
+a yfinance `.info` snapshot (market cap, P/E and other price-dependent
+fields) and were not knowable before the day we took it.  The most recent
+10-K or 10-Q filing date from SEC EDGAR is stored separately as
+`last_filing_date` (informational; None when EDGAR has no record).
 
 Fields captured
 ---------------
@@ -127,29 +127,17 @@ def fetch_fundamentals(symbol: str, today: date | None = None) -> dict | None:
         raw = info.get(yf_key)
         record[col] = float(raw) if raw is not None else None
 
-    # --- EDGAR report_date ---
-    # We attempt to resolve the exact SEC filing date by querying EDGAR for the
-    # most recent 10-K or 10-Q submitted on or before `today`. When EDGAR returns
-    # a filing date, `report_date` is set to that date and `report_date_known=True`,
-    # giving a precise point-in-time anchor: the data was publicly available no
-    # earlier than that filing. When EDGAR has no 10-K/10-Q on record for the
-    # ticker (e.g. ETFs, foreign listings, very small-caps), there is no safe
-    # period-offset heuristic — we do NOT use period_end_date + N days because we
-    # have no period boundary from yfinance to anchor to. Instead we fall back to
-    # `report_date = today` (the collection date) and set `report_date_known=False`
-    # to signal that the timestamp is an upper bound only. Downstream `ore` queries
-    # must treat `report_date_known=False` rows as conservatively available from
-    # the collection date, which avoids look-ahead bias at the cost of using
-    # slightly stale data for tickers that file late.
-    filing_date = edgar.get_latest_filing_date(symbol, before=today)
-    if filing_date is not None:
-        report_date = filing_date
-        report_date_known = True
-    else:
-        report_date = today
-        report_date_known = False
-
-    record["report_date_known"] = report_date_known
+    # --- Point-in-time dates ---
+    # The values are a snapshot of yfinance .info taken today, so the row must
+    # not be visible before today: report_date is the collection date, which is
+    # exact, hence report_date_known=True. Do NOT use the EDGAR filing date as
+    # report_date: market_cap, trailing_pe etc. move with the price after the
+    # filing, so that would leak today's values back to the filing date. The
+    # filing date is kept as last_filing_date to show which quarter's reported
+    # figures the snapshot reflects.
+    report_date = today
+    record["report_date_known"] = True
+    record["last_filing_date"] = edgar.get_latest_filing_date(symbol, before=today)
 
     # --- Bitemporal fields ---
     record.update({
@@ -196,10 +184,9 @@ def run(
                 skipped += 1
             else:
                 mktcap = record.get("market_cap")
-                known = record.get("report_date_known")
                 cap_str = f"  mktcap={mktcap:,.0f}" if mktcap else ""
-                pit_str = f"  report_date={record['report_date']}" + ("" if known else " (estimated)")
-                logger.info("%s  fetched%s%s", prefix, cap_str, pit_str)
+                filing_str = f"  last_filing={record['last_filing_date']}"
+                logger.info("%s  fetched%s%s", prefix, cap_str, filing_str)
                 records.append(record)
         except Exception as exc:
             logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
