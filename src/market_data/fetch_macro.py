@@ -554,8 +554,8 @@ def run(
         try:
             added = update_series(series_id, api_key=api_key, start=start, data_dir=data_dir)
             total_added += added
-        except Exception as exc:
-            logger.error("%s  ERROR: %s", series_id, exc, exc_info=True)
+        except Exception:
+            logger.exception("%s  ERROR", series_id)
 
     logger.info("macro done: %d new rows across %d series", total_added, len(targets))
 
@@ -565,7 +565,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

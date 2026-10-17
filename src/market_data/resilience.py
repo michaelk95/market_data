@@ -35,7 +35,8 @@ The quarantine threshold defaults to 5 and is configurable via
 from __future__ import annotations
 
 import logging
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 import requests
 
@@ -79,14 +80,15 @@ def _make_retry_decorator(label: str) -> Callable[[F], F]:
     Falls back to an identity decorator if tenacity is not installed.
     """
     try:
-        from tenacity import (  # noqa: PLC0415
+        from tenacity import (
+            before_sleep_log,
             retry,
             retry_if_exception,
             stop_after_attempt,
             wait_exponential,
-            before_sleep_log,
         )
-        from market_data.config import cfg as _cfg  # noqa: PLC0415
+
+        from market_data.config import cfg as _cfg
 
         attempts: int = _cfg.get("resilience.retry_attempts", 3)
         min_wait: int = _cfg.get("resilience.retry_min_wait", 2)
@@ -140,7 +142,7 @@ def record_failure(state: dict, symbol: str, reason: str) -> None:
 
     Stores the date of the latest failure and a truncated reason string.
     """
-    from datetime import date  # noqa: PLC0415
+    from datetime import date
 
     failures = _failures(state)
     entry: dict = failures.get(symbol, {"count": 0})
@@ -158,7 +160,7 @@ def clear_failure(state: dict, symbol: str) -> None:
 def _quarantine_threshold(state: dict | None = None) -> int:
     """Return the configured quarantine threshold (default: 5)."""
     try:
-        from market_data.config import cfg as _cfg  # noqa: PLC0415
+        from market_data.config import cfg as _cfg
         return int(_cfg.get("resilience.quarantine_threshold", 5))
     except Exception:  # noqa: BLE001
         return 5

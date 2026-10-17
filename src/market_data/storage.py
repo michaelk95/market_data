@@ -44,7 +44,7 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["write_table", "read_table", "read_macro_as_of", "read_macro_revisions"]
+__all__ = ["read_macro_as_of", "read_macro_revisions", "read_table", "write_table"]
 
 # ---------------------------------------------------------------------------
 # Public API

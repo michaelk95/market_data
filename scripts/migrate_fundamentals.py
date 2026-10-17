@@ -74,8 +74,8 @@ def _migrate_ticker(
     symbol = path.stem
     try:
         old_df = pd.read_parquet(path)
-    except Exception as exc:
-        logger.error("%s  failed to read old file: %s", symbol, exc)
+    except Exception:
+        logger.exception("%s  failed to read old file", symbol)
         return 0, 0
 
     if old_df.empty:
@@ -92,7 +92,7 @@ def _migrate_ticker(
         try:
             filing_date = edgar.get_latest_filing_date(symbol, before=as_of)
             time.sleep(SLEEP_BETWEEN_EDGAR_CALLS)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — informational lookup must not abort the migration
             logger.debug("%s  EDGAR error for %s: %s", symbol, as_of, exc)
             filing_date = None
 
@@ -205,7 +205,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

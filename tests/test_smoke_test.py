@@ -17,7 +17,6 @@ from smoke_test import (
     run,
 )
 
-
 # ---------------------------------------------------------------------------
 # check_yfinance
 # ---------------------------------------------------------------------------
@@ -89,14 +88,16 @@ class TestCheckFred:
             mock_fred = MagicMock()
             mock_fred.get_series.return_value = pd.Series([], dtype=float)
             with patch("fredapi.Fred", return_value=mock_fred):
-                ok, detail = check_fred()
+                ok, _detail = check_fred()
 
         assert ok is False
 
     def test_returns_fail_on_connection_error(self):
-        with patch("market_data.fetch_macro._load_api_key", return_value="testkey"):
-            with patch("fredapi.Fred", side_effect=ConnectionError("no route")):
-                ok, detail = check_fred()
+        with (
+            patch("market_data.fetch_macro._load_api_key", return_value="testkey"),
+            patch("fredapi.Fred", side_effect=ConnectionError("no route")),
+        ):
+            ok, detail = check_fred()
 
         assert ok is False
         assert detail != ""
@@ -128,7 +129,7 @@ class TestCheckIshares:
     def test_iwm_fail_on_exception(self):
         import requests as req
         with patch("requests.get", side_effect=req.ConnectionError("timeout")):
-            ok, detail = check_ishares_iwm()
+            ok, _detail = check_ishares_iwm()
         assert ok is False
 
     def test_ivv_fail_on_http_error(self):
@@ -139,7 +140,7 @@ class TestCheckIshares:
             "requests.get",
             side_effect=req.HTTPError(response=resp),
         ):
-            ok, detail = check_ishares_ivv()
+            ok, _detail = check_ishares_ivv()
         assert ok is False
 
 

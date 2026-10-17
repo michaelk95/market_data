@@ -4,6 +4,33 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.3] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
+
+### Changed
+- Dev dependency `ruff` raised from `>=0.15,<0.16` to `>=0.17.1,<0.18`, and
+  the lint debt the newer default rule set exposed (110 findings across
+  `src/`, `tests/` and `scripts/`) is cleaned up:
+  - Import sorting, unused `# noqa` directives (`PLC0415`, `PLW0603` and
+    `BLE001` comments for rules that no longer fire) and a few
+    modernisations (`collections.abc.Callable`, sorted `__all__`).
+  - `logger.error(..., exc_info=True)` in `except` blocks is now
+    `logger.exception(...)`; the exception text is no longer repeated in the
+    message since the traceback already ends with it.
+  - Blind `except Exception` narrowed where the failure types are known:
+    EDGAR requests (`requests.RequestException`, `ValueError`) and
+    `git rev-parse` in `version()` (`CalledProcessError`, `OSError`). An
+    unexpected error in the EDGAR lookup now fails that ticker's fundamentals
+    snapshot (logged with traceback) instead of being swallowed.
+  - Catch-alls that are deliberate (per-expiry yfinance calls, smoke-test
+    probes, the informational EDGAR lookup in `migrate_fundamentals.py`)
+    keep `except Exception` with an explicit `# noqa: BLE001`; the skipped
+    options expiry warning now includes the error.
+  - `subprocess.run` in `agent.py` passes `check=False` explicitly; test
+    fixes for unused unpacked variables, nested `with` and mutable class
+    attributes.
+
+---
+
 ## [0.10.2] — 2026-10-17 ([#77](https://github.com/michaelk95/market_data/pull/77))
 
 ### Fixed

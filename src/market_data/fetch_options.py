@@ -124,7 +124,7 @@ def get_etf_symbols(onboarded: set[str]) -> list[str]:
     Return sector and broad-market ETF symbols that are in the onboarded set,
     in the order defined in etf_config (sector ETFs first, then broad ETFs).
     """
-    from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+    from market_data.etf_config import ALL_ETFS
     return [s for s in ALL_ETFS if s in onboarded]
 
 
@@ -168,9 +168,10 @@ def fetch_option_chain(symbol: str, max_expiries: int) -> pd.DataFrame:
     for expiry_str in selected:
         try:
             chain = _get_option_chain(ticker, expiry_str)
-        except Exception:
-            # One expiry failing does not block the rest — skip and continue
-            logger.warning("%s  could not fetch expiry %s — skipping", symbol, expiry_str)
+        except Exception as exc:  # noqa: BLE001
+            # yfinance raises arbitrary types. One expiry failing does not
+            # block the rest — skip and continue
+            logger.warning("%s  could not fetch expiry %s — skipping: %s", symbol, expiry_str, exc)
             continue
 
         for side, df_raw in (("call", chain.calls), ("put", chain.puts)):
@@ -286,8 +287,8 @@ def run(
                 expiry_count = df["expiry"].nunique()
                 logger.info("%s  +%d rows  (%d expiries)", prefix, added, expiry_count)
                 saved_rows += added
-        except Exception as exc:
-            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
+        except Exception:
+            logger.exception("%s  ERROR", prefix)
             failed += 1
 
         if i < total:
@@ -303,7 +304,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

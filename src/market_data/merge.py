@@ -76,7 +76,7 @@ def run(data_dir: Path = DEFAULT_DATA_DIR, out: Path = DEFAULT_OUT) -> None:
 
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

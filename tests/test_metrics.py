@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 
 import market_data.metrics as metrics_mod
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

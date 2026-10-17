@@ -184,7 +184,7 @@ PARTITION_COLS: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 
-def validate_bitemporal_columns(df: "pd.DataFrame") -> None:  # noqa: F821
+def validate_bitemporal_columns(df: pd.DataFrame) -> None:  # noqa: F821
     """Raise ValueError if any required bitemporal column is absent from df."""
     import pandas as pd  # local import to keep schema.py import-light
 

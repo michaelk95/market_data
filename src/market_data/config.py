@@ -169,7 +169,7 @@ def reload_config(path: Path | None = None) -> Config:
     (e.g. ``health.FRESHNESS_WINDOWS``) are **not** re-evaluated; only future
     calls to ``cfg.get()`` will see the new values.
     """
-    global cfg  # noqa: PLW0603
+    global cfg
     if path is not None:
         root = path.parent
         data = _load_yaml(path)

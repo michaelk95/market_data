@@ -108,8 +108,8 @@ def run(symbols: list[str] | None = None, history_years: int = DEFAULT_HISTORY_Y
         try:
             added = update_symbol(symbol, history_years)
             total_added += added
-        except Exception as exc:
-            logger.error("%s  ERROR: %s", symbol, exc, exc_info=True)
+        except Exception:
+            logger.exception("%s  ERROR", symbol)
 
         if i < len(targets) - 1:
             time.sleep(SLEEP_BETWEEN_CALLS)
@@ -122,7 +122,7 @@ def run(symbols: list[str] | None = None, history_years: int = DEFAULT_HISTORY_Y
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

@@ -5,17 +5,16 @@ import datetime
 import logging
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
-import pandas as pd
-
 from market_data.fetch_macro import (
-    DEFAULT_START,
-    SERIES_LOOKBACK_DAYS,
     _DEFAULT_LOOKBACK_DAYS,
     _VINTAGE_CHUNK_YEARS,
-    _detect_revisions,
+    DEFAULT_START,
+    SERIES_LOOKBACK_DAYS,
     _derive_realtime_end,
+    _detect_revisions,
     _fetch_all_releases_chunked,
     _recompute_revision_ranks,
     fetch_series_vintages,
@@ -23,7 +22,6 @@ from market_data.fetch_macro import (
 )
 from market_data.schema import PARTITION_COLS, DataSource, ReportTimeMarker
 from market_data.storage import write_table
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture — mimics what fredapi.get_series_all_releases actually returns.
@@ -422,12 +420,14 @@ class TestUpdateSeries:
             "revision_rank": 2,
         }])
 
-        with caplog.at_level(logging.INFO, logger="market_data.fetch_macro"):
-            with patch(
+        with (
+            caplog.at_level(logging.INFO, logger="market_data.fetch_macro"),
+            patch(
                 "market_data.fetch_macro.fetch_series_vintages",
                 return_value=second_vintage,
-            ):
-                update_series("GDPC1", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
+            ),
+        ):
+            update_series("GDPC1", api_key="test", start=DEFAULT_START, data_dir=tmp_path)
 
         revision_logs = [r for r in caplog.records if "Revision detected" in r.message]
         assert len(revision_logs) >= 1

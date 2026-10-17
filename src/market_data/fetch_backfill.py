@@ -260,7 +260,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(
@@ -303,8 +303,8 @@ def main() -> None:
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         sys.exit(1)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Backfill failed: %s", exc, exc_info=True)
+    except Exception:
+        logger.exception("Backfill failed")
         sys.exit(1)
 
 

@@ -176,8 +176,8 @@ def run(
                     count if count is not None else "n/a",
                 )
                 records.append(record)
-        except Exception as exc:
-            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
+        except Exception:
+            logger.exception("%s  ERROR", prefix)
             failed += 1
 
         if i < total:
@@ -199,7 +199,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(
@@ -223,8 +223,9 @@ def main() -> None:
         symbols = args.symbols
     else:
         # Load from state.json
-        import json  # noqa: PLC0415
-        from market_data.etf_config import ALL_ETFS  # noqa: PLC0415
+        import json
+
+        from market_data.etf_config import ALL_ETFS
         state_file = Path("state.json")
         if not state_file.exists():
             logger.warning("No state.json found and no --symbols provided. Nothing to do.")

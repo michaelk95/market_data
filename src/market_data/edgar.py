@@ -95,7 +95,7 @@ def get_latest_filing_date(
 
     try:
         submissions = _fetch_submissions(cik)
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         logger.warning("edgar: failed to fetch submissions for %s (CIK %s): %s", ticker, cik, exc)
         return None
 
@@ -117,7 +117,7 @@ def _load_cik_map() -> dict[str, str]:
         resp = requests.get(_TICKERS_URL, headers=_HEADERS, timeout=15)
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         logger.warning("edgar: failed to load company_tickers.json: %s", exc)
         return {}
 

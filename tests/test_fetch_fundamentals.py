@@ -11,7 +11,6 @@ from market_data.fetch_fundamentals import fetch_fundamentals, run
 from market_data.schema import validate_bitemporal_columns
 from market_data.storage import read_table
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

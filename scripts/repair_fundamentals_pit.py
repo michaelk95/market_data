@@ -266,7 +266,7 @@ def run(*, data_dir: Path = DATA_DIR, apply: bool = False) -> dict:
 
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(

@@ -188,8 +188,8 @@ def run(
                 filing_str = f"  last_filing={record['last_filing_date']}"
                 logger.info("%s  fetched%s%s", prefix, cap_str, filing_str)
                 records.append(record)
-        except Exception as exc:
-            logger.error("%s  ERROR: %s", prefix, exc, exc_info=True)
+        except Exception:
+            logger.exception("%s  ERROR", prefix)
             failed += 1
 
         if i < total:
@@ -211,7 +211,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
     setup_logging()
 
     parser = argparse.ArgumentParser(
@@ -235,7 +235,7 @@ def main() -> None:
         symbols = args.symbols
     else:
         # Load from state.json
-        import json  # noqa: PLC0415
+        import json
         state_file = Path("state.json")
         if not state_file.exists():
             logger.warning("No state.json found and no --symbols provided. Nothing to do.")

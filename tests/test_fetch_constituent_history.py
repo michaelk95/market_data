@@ -11,7 +11,6 @@ import pytest
 
 from market_data.fetch_constituent_history import parse_ticker_start_end
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -157,7 +157,7 @@ def health_check(data_dir: Path | None = None) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    from market_data.logging_config import setup_logging  # noqa: PLC0415
+    from market_data.logging_config import setup_logging
 
     setup_logging()
 

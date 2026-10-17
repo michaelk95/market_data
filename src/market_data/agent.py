@@ -190,6 +190,7 @@ def _tool_create_github_issue(
             capture_output=True,
             text=True,
             cwd=REPO_ROOT,
+            check=False,
         )
         if result.returncode == 0:
             return f"Issue created: {result.stdout.strip()}"

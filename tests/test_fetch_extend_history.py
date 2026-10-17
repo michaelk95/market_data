@@ -13,8 +13,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from market_data.fetch_extend_history import pending_tickers, run, EARLIEST_TARGET
-
+from market_data.fetch_extend_history import EARLIEST_TARGET, pending_tickers, run
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -100,7 +99,7 @@ class TestPendingTickers:
         df = _ohlcv("AAPL", "2010-01-04")
         _write_parquet(tmp_path / "AAPL.parquet", df)
         custom_target = date(2005, 1, 1)
-        needs, deep = pending_tickers({"AAPL"}, tmp_path, set(), set(), custom_target)
+        needs, _deep = pending_tickers({"AAPL"}, tmp_path, set(), set(), custom_target)
         assert "AAPL" in needs
 
 

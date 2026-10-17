@@ -14,6 +14,6 @@ def version() -> dict:
             stderr=subprocess.DEVNULL,
             text=True,
         ).strip()
-    except Exception:
+    except (subprocess.CalledProcessError, OSError):
         sha = "unknown"
     return {"version": pkg, "sha": sha}

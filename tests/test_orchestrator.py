@@ -11,8 +11,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-import market_data.orchestrator as orchestrator
-
+from market_data import orchestrator
 
 # ---------------------------------------------------------------------------
 # load_state() / save_state()
