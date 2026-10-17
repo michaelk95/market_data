@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.1] — 2026-10-17 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.10.1] — 2026-10-17 ([#76](https://github.com/michaelk95/market_data/pull/76))
 
 ### Fixed
 - Point-in-time lookahead in the `fundamentals` table: `fetch_fundamentals.py`
