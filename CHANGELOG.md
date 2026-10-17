@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.2] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
+## [0.10.3] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
 
 ### Changed
 - Dev dependency `ruff` raised from `>=0.15,<0.16` to `>=0.17.1,<0.18`, and
@@ -28,6 +28,19 @@ All notable changes to this project will be documented here.
   - `subprocess.run` in `agent.py` passes `check=False` explicitly; test
     fixes for unused unpacked variables, nested `with` and mutable class
     attributes.
+
+---
+
+## [0.10.2] — 2026-10-17 ([#77](https://github.com/michaelk95/market_data/pull/77))
+
+### Fixed
+- Scripts in `scripts/` logged nothing: they used `logging.getLogger(__name__)`,
+  which is `__main__` when run directly, while `setup_logging()` only attaches
+  handlers to the `market_data` logger. Each script now logs under
+  `market_data.<script_name>`, and `tests/test_script_logging.py` checks that
+  every script's records reach the configured handlers.
+
+---
 
 ## [0.10.1] — 2026-10-17 ([#76](https://github.com/michaelk95/market_data/pull/76))
 

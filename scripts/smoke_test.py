@@ -31,7 +31,7 @@ import logging
 import sys
 from datetime import date, timedelta
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("market_data.smoke_test")
 
 
 # ---------------------------------------------------------------------------
