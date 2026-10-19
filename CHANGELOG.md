@@ -4,6 +4,19 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.4] — 2026-10-19 ([#79](https://github.com/michaelk95/market_data/pull/79))
+
+### Changed
+- Agent instructions rewritten. `AGENTS.md` (new) holds the shared
+  instructions: the task workflow (research, plan, failing tests, implement,
+  test, lint, PR), hard rules (real data, point-in-time correctness,
+  writes only through the existing atomic writers, polite caching and rate limiting), conventions and
+  commands. Research goes in `docs/research/`, ADRs in `docs/decisions/`.
+  `CLAUDE.md` now just imports `AGENTS.md`; the architecture overview
+  and module table are removed.
+
+---
+
 ## [0.10.3] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
 
 ### Changed
