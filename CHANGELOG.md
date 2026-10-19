@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.12.0] — 2026-10-19 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.12.0] — 2026-10-19 ([#83](https://github.com/michaelk95/market_data/pull/83))
 
 ### Added
 - `fetch.TickerBatchWriter` buffers conformed OHLCV rows for many symbols and
@@ -145,7 +145,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.9.1] — 2026-05-10 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.9.1] — 2026-05-10 ([#83](https://github.com/michaelk95/market_data/pull/83))
 
 ### Changed
 - Moved one-shot migration scripts (`migrate_fundamentals.py`, `migrate_macro.py`) and `smoke_test.py` out of the `market_data` package into a top-level `scripts/` directory; removed their `pyproject.toml` CLI entry points
