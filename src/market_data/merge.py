@@ -10,9 +10,9 @@ Leftover flat ``data/ohlcv/<SYMBOL>.parquet`` files are not read.
 
 Usage
 -----
-    python merge.py                       # reads data/ohlcv/, writes data/merged.parquet
-    python merge.py --data-dir ./data     # explicit paths
-    python merge.py --out ./merged.parquet
+    market-data-merge                       # reads data/ohlcv/, writes data/merged.parquet
+    market-data-merge --data-dir ./data     # explicit data root
+    market-data-merge --out ./merged.parquet
 """
 
 from __future__ import annotations

@@ -2,15 +2,23 @@
 
 Market data collector for the `paper_trading` backtest engine.
 
-Collects and stores four categories of data:
+Collects and stores six categories of data:
 
 | Category | Source | Cadence | Storage |
 |----------|--------|---------|---------|
-| Equity OHLCV (SP500 + Russell 2000) | yfinance | Daily | `data/<SYMBOL>.parquet` |
-| Market indices & rates (VIX, Treasury yields, Fed Funds futures) | yfinance | Daily | `data/indices/<SYMBOL>.parquet` |
-| Macro series (CPI, GDP, unemployment, etc.) | FRED API | Daily/Monthly/Quarterly | `data/macro/<SERIES_ID>.parquet` |
-| Per-ticker fundamentals (market cap, analyst estimates) | yfinance | Monthly | `data/fundamentals/<SYMBOL>.parquet` |
-| Options chains / IV (SP500 only) | yfinance | Daily (batched ~10-day cycle) | `data/options/<SYMBOL>.parquet` |
+| Equity OHLCV (SP500 + Russell 2000) | yfinance | Daily | `data/ohlcv/year=YYYY/data.parquet` |
+| Market indices & rates (VIX, Treasury yields, Fed Funds futures) | yfinance | Daily | `data/indices/data.parquet` |
+| Macro series (CPI, GDP, unemployment, etc.) | FRED API | Daily/Monthly/Quarterly | `data/macro/data.parquet` |
+| Per-ticker fundamentals (market cap, P/E, EPS, etc.) | yfinance | Monthly | `data/fundamentals/year=YYYY/data.parquet` |
+| Analyst estimates (price targets, recommendation) | yfinance | Daily | `data/analyst_estimates/year=YYYY/data.parquet` |
+| Options chains / IV (SP500 + sector/broad ETFs) | yfinance | Daily (batched ~10-day cycle) | `data/options/year=YYYY/data.parquet` |
+
+Every table is written by `storage.write_table` in the bitemporal layout from
+`schema.py`: large tables are split into `year=YYYY/data.parquet` partitions,
+and small ones go in a single `data.parquet`. Read them with
+`storage.read_table`. Older flat `data/<table>/<SYMBOL>.parquet` files from
+before 0.11.0 are no longer read; `scripts/migrate_flat_tables.py` copies them
+into the tables.
 
 ---
 
@@ -23,13 +31,17 @@ virtual environment:
 |---------|-------------|
 | `market-data-fetch-tickers` | Download the current Russell 2000 + SP500 constituent list and save to `tickers.csv` |
 | `market-data-run` | Run the daily pipeline — onboard new tickers, update existing ones, and optionally run all data types |
-| `market-data-merge` | Merge all per-ticker OHLCV Parquet files into a single `data/merged.parquet` |
+| `market-data-merge` | Build `data/merged.parquet` (flat OHLCV for the backtest engine) from the `ohlcv` table |
 | `market-data-fetch-indices` | Update market index and rate symbols (VIX, Treasury yields, Fed Funds futures) |
 | `market-data-fetch-macro` | Update FRED macro series (CPI, GDP, Fed Funds rate, Treasury spread, etc.) |
-| `market-data-fetch-fundamentals` | Snapshot per-ticker fundamentals for all onboarded tickers (market cap, analyst targets, etc.) |
-| `market-data-fetch-options` | Run the next batch of SP500 option chain snapshots (IV, bid/ask, open interest) |
+| `market-data-fetch-fundamentals` | Snapshot per-ticker fundamentals for all onboarded tickers (market cap, P/E, EPS, etc.) |
+| `market-data-fetch-analyst-estimates` | Snapshot analyst price targets and recommendation for all onboarded equities |
+| `market-data-fetch-options` | Run the next batch of option chain snapshots (IV, bid/ask, open interest) |
 | `market-data-fetch-constituent-history` | Download historical S&P 500 constituent membership (1996–present) to `data/constituent_history.parquet` |
 | `market-data-backfill-constituents` | Backfill OHLCV data for delisted S&P 500 tickers to mitigate survivorship bias |
+| `market-data-extend-history` | Extend OHLCV history for onboarded tickers back to the earliest available date (targets 1990) |
+| `market-data-health` | Check how recently each data directory was updated |
+| `market-data-agent` | Read logs, check data freshness and file GitHub issues for confirmed problems (uses the Anthropic API) |
 
 Each command accepts `--help` for full usage details.
 
@@ -87,6 +99,7 @@ market-data-run                                          # onboard + update OHLC
 market-data-run --indices                                # also update indices & rates
 market-data-run --macro                                  # also update FRED macro series
 market-data-run --fundamentals                           # also snapshot fundamentals (monthly)
+market-data-run --analyst-estimates                      # also snapshot analyst estimates
 market-data-run --indices --macro --fundamentals --options --merge # full run (recommended daily)
 market-data-run --batch-size 25                          # onboard fewer new tickers per day
 market-data-run --batch-size 0                           # skip onboarding; updates only
@@ -133,8 +146,8 @@ market-data-backfill-constituents --dry-run
 
 **What this does:** `constituent_history.parquet` records every ticker's
 S&P 500 membership span (`date_added` → `date_removed`). For each delisted
-ticker with no existing OHLCV file, the backfill fetches that exact date range
-from yfinance and saves it to `data/ohlcv/` using the same schema as the
+ticker with no rows in the `ohlcv` table, the backfill fetches that exact date range
+from yfinance and writes it to the `ohlcv` table the same way as the
 regular pipeline. Progress (completed and failed tickers) is written to
 `state.json` after each ticker so the run is safely resumable.
 
@@ -144,7 +157,7 @@ bankruptcy-reorganised tickers. Those are recorded in `state.json` under
 
 ### 7. Merge into a single file
 
-Merge all per-ticker OHLCV files into a single Parquet for the backtest engine:
+Build a single flat Parquet for the backtest engine from the `ohlcv` table:
 
 ```bash
 market-data-merge
@@ -153,7 +166,7 @@ market-data-merge
 This writes `data/merged.parquet`. Pass `--merge` to the orchestrator to do
 this automatically at the end of each run.
 
-### 7. Schedule daily runs
+### 8. Schedule daily runs
 
 `run_and_sleep.bat` activates the virtual environment, runs the full pipeline,
 logs output to `logs/runner.log`, and hibernates the PC. Point Windows Task
@@ -173,27 +186,29 @@ market-data-run --indices --macro --fundamentals --options --merge
 `--fundamentals` is self-throttling — it auto-skips if a snapshot was taken
 less than 30 days ago, so it's safe to include in every daily run.
 
-`--options` processes the next 50 SP500 tickers in the current cycle. After
-all ~500 SP500 tickers are covered (~10 days), the cycle resets automatically.
+`--options` processes the next 50 tickers in the current cycle (ETFs first,
+then SP500). After all ~500 tickers are covered (~10 days), the cycle resets
+automatically.
 
 ---
 
 ## Data formats
 
-### Equity OHLCV — `data/<SYMBOL>.parquet`
+### Equity OHLCV — `data/ohlcv/year=YYYY/data.parquet`
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `date` | date | Trading day |
 | `symbol` | str | Ticker symbol |
 | `open` | float | |
 | `high` | float | |
 | `low` | float | |
 | `close` | float | Adjusted close |
 | `volume` | float | |
+| *bitemporal columns* | | `period_start_date` is the trading day; `report_time_marker` is `post-market` |
 
-`data/merged.parquet` is a concatenation of all per-ticker files, used as the
-input to the `paper_trading` backtest engine:
+`data/merged.parquet` flattens the table to `date, symbol, open, high, low,
+close, volume` (`date` is `period_start_date`), used as the input to the
+`paper_trading` backtest engine:
 
 ```python
 from paper_trading import MarketData, BacktestEngine
@@ -202,9 +217,9 @@ md = MarketData.from_parquet("../market_data/data/merged.parquet")
 engine = BacktestEngine(market_data=md, initial_cash=100_000)
 ```
 
-### Indices & rates — `data/indices/<SYMBOL>.parquet`
+### Indices & rates — `data/indices/data.parquet`
 
-Same schema as equity OHLCV. Symbols collected:
+Same schema as equity OHLCV, in one unpartitioned file. Symbols collected:
 
 | Symbol | Description |
 |--------|-------------|
@@ -216,13 +231,36 @@ Same schema as equity OHLCV. Symbols collected:
 | `ZQ=F` | 30-day Fed Funds Futures (front month) |
 | `^GSPC` | S&P 500 index level |
 
-### Macro series — `data/macro/<SERIES_ID>.parquet`
+### Bitemporal columns
 
-| Column | Type | Notes |
-|--------|------|-------|
-| `date` | date | Observation date |
-| `series_id` | str | FRED series ID |
-| `value` | float | |
+Every table written by `storage.write_table` has these columns in addition to
+its data columns:
+
+| Column | Description |
+|--------|-------------|
+| `period_start_date` | Start of the period the row describes |
+| `period_end_date` | End of that period |
+| `report_date` | Date the value became publicly available |
+| `report_time_marker` | `pre-market`, `during-hours` or `post-market` |
+| `source` | Data provider (`yfinance`, `fred`, ...) |
+| `collected_at` | UTC timestamp when the pipeline collected the row |
+
+Filter on `report_date <= as_of` for point-in-time (look-ahead-free) queries.
+
+### Macro series — `data/macro/data.parquet`
+
+One file for all series. Every FRED vintage is kept, so revisions can be
+replayed point-in-time (`storage.read_macro_as_of`,
+`storage.read_macro_revisions`).
+
+| Column | Description |
+|--------|-------------|
+| `series_id` | FRED series ID |
+| `value` | Observed value in this vintage |
+| `valid_to_date` | Last day this vintage was current (`9999-12-31` = still current) |
+| `revision_rank` | 1 = first estimate, 2 = second, ... within a period |
+| `release_name` | FRED release name (nullable) |
+| *bitemporal columns* | `period_start_date` is the observation date |
 
 Series collected by default:
 
@@ -239,13 +277,12 @@ Series collected by default:
 | `GDPC1` | Real GDP (chained 2017 dollars) | Quarterly |
 | `GDP` | Nominal GDP | Quarterly |
 
-### Options chains — `data/options/<SYMBOL>.parquet`
+### Options chains — `data/options/year=YYYY/data.parquet`
 
-Daily snapshots for SP500 tickers. Each row is one option contract observed on `snapshot_date`.
+Daily snapshots for SP500 tickers and ETFs. Each row is one option contract observed on the snapshot date.
 
 | Column | Description |
 |--------|-------------|
-| `snapshot_date` | Date the snapshot was taken |
 | `symbol` | Underlying ticker |
 | `expiry` | Option expiration date |
 | `strike` | Strike price |
@@ -257,18 +294,19 @@ Daily snapshots for SP500 tickers. Each row is one option contract observed on `
 | `open_interest` | Total open contracts |
 | `implied_vol` | Implied volatility (annualised decimal, e.g. 0.25 = 25%) |
 | `in_the_money` | `True` if the contract is currently ITM |
+| *bitemporal columns* | `period_start_date` is the snapshot date; `report_time_marker` is `pre-market` |
 
 Covers the nearest 4 expiration dates per ticker. Data source is yfinance
 (unofficial scraper) — suitable for research and forecasting, not production trading.
 Greek values (delta, gamma, etc.) are not available from this source.
 
-### Fundamentals — `data/fundamentals/<SYMBOL>.parquet`
+### Fundamentals — `data/fundamentals/year=YYYY/data.parquet`
 
-One row per ticker per monthly snapshot, tagged with `as_of` date.
+One row per ticker per monthly snapshot, partitioned by the year of the
+snapshot date.
 
 | Column | Description |
 |--------|-------------|
-| `as_of` | Snapshot date |
 | `symbol` | Ticker symbol |
 | `market_cap` | Market capitalisation |
 | `enterprise_value` | Enterprise value |
@@ -279,8 +317,21 @@ One row per ticker per monthly snapshot, tagged with `as_of` date.
 | `forward_eps` | EPS (forward estimate) |
 | `total_revenue` | Revenue (trailing 12 months) |
 | `profit_margin` | Net profit margin |
+| `report_date_known` | `True` if `report_date` comes from a known filing date |
+| `last_filing_date` | Latest 10-K/10-Q filing on or before the snapshot (informational) |
+| *bitemporal columns* | `period_start_date` is the snapshot date |
+
+### Analyst estimates — `data/analyst_estimates/year=YYYY/data.parquet`
+
+One row per ticker per daily snapshot, partitioned by year.
+
+| Column | Description |
+|--------|-------------|
+| `symbol` | Ticker symbol |
 | `analyst_target_mean` | Analyst mean price target |
 | `analyst_target_low` | Analyst low price target |
 | `analyst_target_high` | Analyst high price target |
-| `analyst_recommendation` | Mean recommendation (1=Strong Buy … 5=Strong Sell) |
+| `analyst_recommendation` | Mean recommendation as a string, e.g. `"1.8"` (1=Strong Buy … 5=Strong Sell) |
 | `analyst_count` | Number of analyst opinions |
+| `report_date_known` | Always `False` (the consensus has no filing date) |
+| *bitemporal columns* | `period_start_date` and `report_date` are the collection date |

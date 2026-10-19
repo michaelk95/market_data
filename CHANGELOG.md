@@ -36,6 +36,38 @@ All notable changes to this project will be documented here.
 
 ### Docs
 - `AGENTS.md` describes the bitemporal ohlcv/indices/options writers.
+- README storage table, layout note, data formats and `market-data-merge`
+  description now show ohlcv, indices and options as bitemporal tables.
+
+---
+
+## [0.10.6] — 2026-10-19 ([#81](https://github.com/michaelk95/market_data/pull/81))
+
+### Fixed
+- `market-data-health` reported fundamentals as missing or stale even when
+  current: its freshness scan used a non-recursive `glob("*.parquet")`, which
+  never sees the `year=YYYY/data.parquet` partitions `storage.write_table`
+  writes. The scan is now recursive, so partitioned tables are found while
+  flat per-symbol files (ohlcv, options) and macro's single `data.parquet`
+  keep working. Leftover `*.tmp.parquet` files from an interrupted write are
+  ignored so they cannot make a table look fresh.
+  
+---
+  
+## [0.10.5] — 2026-10-19 ([#80](https://github.com/michaelk95/market_data/pull/80))
+
+### Changed
+- README storage paths and data formats now match what each collector
+  writes: OHLCV is `data/ohlcv/<SYMBOL>.parquet` (not `data/<SYMBOL>.parquet`),
+  macro is one bitemporal `data/macro/data.parquet`, fundamentals is
+  `data/fundamentals/year=YYYY/data.parquet` with bitemporal columns, and
+  analyst estimates are documented as their own table. Added a note on the
+  two storage layouts, a bitemporal column reference, and the missing CLI
+  commands (`fetch-analyst-estimates`, `extend-history`, `health`, `agent`).
+- `merge.py` docstring describes the flat `data/ohlcv/` input and why the
+  migrated `year=YYYY/` partitions are not read; new test pins that.
+  
+---
 
 ## [0.10.4] — 2026-10-19 ([#79](https://github.com/michaelk95/market_data/pull/79))
 
@@ -138,7 +170,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.9.1] — 2026-05-10 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.9.1] — 2026-05-10 ([#80](https://github.com/michaelk95/market_data/pull/80))
 
 ### Changed
 - Moved one-shot migration scripts (`migrate_fundamentals.py`, `migrate_macro.py`) and `smoke_test.py` out of the `market_data` package into a top-level `scripts/` directory; removed their `pyproject.toml` CLI entry points

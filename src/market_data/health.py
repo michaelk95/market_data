@@ -57,12 +57,27 @@ FRESHNESS_WINDOWS: dict[str, int] = _cfg.get(
 _DEFAULT_DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 
 
+def _find_parquet_files(data_subdir: Path) -> list[Path]:
+    """
+    Return the committed parquet files under *data_subdir*, at any depth.
+
+    Recursive so storage.write_table's ``year=YYYY/data.parquet`` partitions are
+    seen alongside flat per-symbol files; ``*.tmp.parquet`` files left by an
+    interrupted atomic write are skipped.
+    """
+    return [
+        p for p in data_subdir.rglob("*.parquet")
+        if not p.name.endswith(".tmp.parquet")
+    ]
+
+
 def health_check(data_dir: Path | None = None) -> dict[str, dict]:
     """
     Check whether each data type has been updated within its freshness window.
 
     Uses the most recent file-modification timestamp among all *.parquet files
-    in each subdirectory as a proxy for "last updated".
+    in each subdirectory, including year=YYYY partitions and excluding
+    *.tmp.parquet, as a proxy for "last updated".
 
     Parameters
     ----------
@@ -99,7 +114,7 @@ def health_check(data_dir: Path | None = None) -> dict[str, dict]:
             )
             continue
 
-        parquet_files = list(data_subdir.glob("*.parquet"))
+        parquet_files = _find_parquet_files(data_subdir)
         if not parquet_files:
             results[data_type] = {
                 "last_updated": None,
