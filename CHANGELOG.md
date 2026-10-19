@@ -4,6 +4,19 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.6] — 2026-10-19 ([#81](https://github.com/michaelk95/market_data/pull/81))
+
+### Fixed
+- `market-data-health` reported fundamentals as missing or stale even when
+  current: its freshness scan used a non-recursive `glob("*.parquet")`, which
+  never sees the `year=YYYY/data.parquet` partitions `storage.write_table`
+  writes. The scan is now recursive, so partitioned tables are found while
+  flat per-symbol files (ohlcv, options) and macro's single `data.parquet`
+  keep working. Leftover `*.tmp.parquet` files from an interrupted write are
+  ignored so they cannot make a table look fresh.
+  
+---
+  
 ## [0.10.5] — 2026-10-19 ([#80](https://github.com/michaelk95/market_data/pull/80))
 
 ### Changed
