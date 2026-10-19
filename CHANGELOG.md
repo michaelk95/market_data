@@ -27,6 +27,8 @@ All notable changes to this project will be documented here.
   instead of the row count after the write minus the count before. The two
   differ only when a stored partition already held duplicate keys.
 
+---
+
 ## [0.11.0] — 2026-10-19 ([#82](https://github.com/michaelk95/market_data/pull/82))
 
 ### Changed
