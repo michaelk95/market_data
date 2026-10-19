@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.4] — 2026-10-19
+## [0.10.4] — 2026-10-19 ([#79](https://github.com/michaelk95/market_data/pull/79))
 
 ### Changed
 - Agent instructions rewritten. `AGENTS.md` (new) holds the shared
