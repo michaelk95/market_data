@@ -231,3 +231,48 @@ class TestSummaryLogging:
         result = health_check(data_dir=root)
         assert result["ohlcv"]["is_stale"] is False
         assert result["options"]["is_stale"] is True
+
+
+# ---------------------------------------------------------------------------
+# Partitioned (storage.write_table) layout
+# ---------------------------------------------------------------------------
+
+class TestPartitionedLayout:
+    def test_partition_file_counts_as_fresh(self, tmp_path):
+        """fundamentals/year=YYYY/data.parquet with no flat files is found."""
+        root = tmp_path / "data"
+        _write_parquet(root / "fundamentals" / "year=2026" / "data.parquet", age_days=1.0)
+        (root / "fundamentals" / "AAPL.parquet.bak").write_bytes(b"old")
+        result = health_check(data_dir=root)
+        assert result["fundamentals"]["last_updated"] is not None
+        assert result["fundamentals"]["is_stale"] is False
+
+    def test_newest_partition_wins(self, tmp_path):
+        root = tmp_path / "data"
+        _write_parquet(root / "fundamentals" / "year=2025" / "data.parquet", age_days=200.0)
+        _write_parquet(root / "fundamentals" / "year=2026" / "data.parquet", age_days=2.0)
+        result = health_check(data_dir=root)
+        assert result["fundamentals"]["is_stale"] is False
+
+    def test_tmp_parquet_is_ignored(self, tmp_path):
+        """A leftover *.tmp.parquet from an interrupted write must not count."""
+        root = tmp_path / "data"
+        _write_parquet(root / "fundamentals" / "year=2026" / "data.parquet", age_days=60.0)
+        _write_parquet(root / "fundamentals" / "year=2026" / "data.tmp.parquet", age_days=0.1)
+        _write_parquet(root / "ohlcv" / "AAPL.tmp.parquet", age_days=0.1)
+        result = health_check(data_dir=root)
+        assert result["fundamentals"]["is_stale"] is True
+        assert result["fundamentals"]["age_days"] > 35
+        assert result["ohlcv"]["last_updated"] is None
+        assert result["ohlcv"]["is_stale"] is True
+
+    def test_flat_and_partitioned_coexist(self, tmp_path):
+        """Flat layouts (ohlcv per-symbol, macro data.parquet) sit beside partitions."""
+        root = tmp_path / "data"
+        _write_parquet(root / "ohlcv" / "AAPL.parquet", age_days=0.5)
+        _write_parquet(root / "macro" / "data.parquet", age_days=1.0)
+        _write_parquet(root / "fundamentals" / "year=2026" / "data.parquet", age_days=1.0)
+        result = health_check(data_dir=root)
+        assert result["ohlcv"]["is_stale"] is False
+        assert result["macro"]["is_stale"] is False
+        assert result["fundamentals"]["is_stale"] is False
