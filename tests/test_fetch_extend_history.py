@@ -236,10 +236,13 @@ class TestRun:
         mock_state_path.read_text = state_file.read_text
         mock_state_path.write_text = state_file.write_text
 
+        before = state_file.read_text()
+
         run(data_dir=data_dir, batch_size=0, dry_run=True)
 
         mock_fetch.assert_not_called()
         assert len(read_table("ohlcv", data_dir)) == 5  # nothing new written
+        assert state_file.read_text() == before
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
     @patch("market_data.fetch_extend_history.STATE_FILE")

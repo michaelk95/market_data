@@ -213,6 +213,7 @@ class TestRun:
 
         mock_fetch.assert_not_called()
         assert not (tmp_path / "data" / "ohlcv").exists()
+        assert not state_file.exists()
 
     def test_missing_constituent_file_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="market-data-fetch-constituent-history"):

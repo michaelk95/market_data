@@ -206,6 +206,8 @@ def run(
     def flush() -> None:
         # A ticker is complete only once the write holding its rows succeeds.
         nonlocal fetched, failed
+        if not writer.symbols:
+            return
         try:
             counts = writer.flush()
         except BatchWriteError as exc:

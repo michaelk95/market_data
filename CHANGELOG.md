@@ -23,10 +23,9 @@ All notable changes to this project will be documented here.
   complete, and its metrics are recorded, only after the write holding its
   rows succeeds. If a batch write fails, every ticker in that batch is
   recorded as failed and the run continues.
-- `storage._merge_write` counts the incoming rows that survive
-  deduplication instead of taking the row count after the write minus the
-  count before. `write_table`'s return value is unchanged unless a partition
-  already held duplicate keys.
+- `write_table` now counts the incoming rows that survive deduplication,
+  instead of the row count after the write minus the count before. The two
+  differ only when a stored partition already held duplicate keys.
 
 ## [0.11.0] — 2026-10-19 ([#82](https://github.com/michaelk95/market_data/pull/82))
 
