@@ -13,8 +13,11 @@ import migrate_flat_tables
 import pandas as pd
 import pytest
 
+from market_data import fetch
 from market_data.fetch import (
     OHLCV_COLS,
+    BatchWriteError,
+    TickerBatchWriter,
     _normalize,
     load_ticker_data,
     save_ticker_data,
@@ -248,3 +251,103 @@ class TestLoadTickerData:
         loaded = load_ticker_data("^VIX", tmp_path, table="indices")
         assert loaded["date"].max() == date(2024, 1, 3)
         assert load_ticker_data("^VIX", tmp_path) is None  # not in ohlcv
+
+
+# ---------------------------------------------------------------------------
+# TickerBatchWriter  (one write_table call per batch of symbols)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def write_calls(monkeypatch):
+    """Record every storage write the batch writer makes."""
+    calls: list[pd.DataFrame] = []
+    real = fetch.write_table_counts
+
+    def spy(df, table, data_dir):
+        calls.append(df)
+        return real(df, table, data_dir)
+
+    monkeypatch.setattr(fetch, "write_table_counts", spy)
+    return calls
+
+
+class TestTickerBatchWriter:
+    def test_one_write_for_many_symbols(self, tmp_path, write_calls):
+        writer = TickerBatchWriter(tmp_path, max_symbols=10)
+        for sym in ("AAA", "BBB", "CCC"):
+            writer.add(sym, pd.concat([
+                _bar(date(2023, 12, 29), 10.0, sym), _bar(date(2024, 1, 2), 11.0, sym),
+            ]))
+        assert write_calls == []
+
+        counts = writer.flush()
+
+        assert len(write_calls) == 1
+        assert counts == {"AAA": 2, "BBB": 2, "CCC": 2}
+        assert len(read_table("ohlcv", tmp_path)) == 6
+
+    def test_counts_exclude_rows_already_stored(self, tmp_path, write_calls):
+        save_ticker_data("AAA", _bar(date(2024, 1, 2), 10.0, "AAA"), tmp_path)
+        writer = TickerBatchWriter(tmp_path)
+        writer.add("AAA", pd.concat([
+            _bar(date(2024, 1, 2), 99.0, "AAA"), _bar(date(2024, 1, 3), 11.0, "AAA"),
+        ]))
+        writer.add("BBB", _bar(date(2024, 1, 2), 20.0, "BBB"))
+        assert writer.flush() == {"AAA": 1, "BBB": 1}
+        stored = load_ticker_data("AAA", tmp_path)
+        assert stored.loc[stored["date"] == date(2024, 1, 2), "close"].item() == 10.0
+
+    def test_symbol_with_nothing_new_reports_zero(self, tmp_path, write_calls):
+        save_ticker_data("AAA", _bar(date(2024, 1, 2), 10.0, "AAA"), tmp_path)
+        writer = TickerBatchWriter(tmp_path)
+        writer.add("AAA", _bar(date(2024, 1, 2), 10.0, "AAA"))
+        writer.add("EMPTY", pd.DataFrame(columns=OHLCV_COLS))
+        assert writer.flush() == {"AAA": 0, "EMPTY": 0}
+
+    def test_full_after_max_symbols(self, tmp_path):
+        writer = TickerBatchWriter(tmp_path, max_symbols=2)
+        writer.add("AAA", _bar(date(2024, 1, 2), 10.0, "AAA"))
+        assert not writer.full
+        writer.add("BBB", _bar(date(2024, 1, 2), 10.0, "BBB"))
+        assert writer.full
+        assert writer.symbols == ["AAA", "BBB"]
+        writer.flush()
+        assert not writer.full
+        assert writer.symbols == []
+
+    def test_flush_of_empty_buffer_writes_nothing(self, tmp_path, write_calls):
+        assert TickerBatchWriter(tmp_path).flush() == {}
+        assert write_calls == []
+
+    def test_bad_frame_fails_at_add_and_is_not_buffered(self, tmp_path):
+        writer = TickerBatchWriter(tmp_path)
+        with pytest.raises(ValueError):
+            writer.add("BAD", pd.DataFrame({"symbol": ["BAD"], "close": [1.0]}))
+        writer.add("AAA", _bar(date(2024, 1, 2), 10.0, "AAA"))
+        assert writer.symbols == ["AAA"]
+        assert writer.flush() == {"AAA": 1}
+
+    def test_failed_flush_raises_with_symbols_and_clears_buffer(self, tmp_path, monkeypatch):
+        def boom(df, table, data_dir):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(fetch, "write_table_counts", boom)
+        writer = TickerBatchWriter(tmp_path)
+        writer.add("AAA", _bar(date(2024, 1, 2), 10.0, "AAA"))
+        writer.add("BBB", _bar(date(2024, 1, 2), 10.0, "BBB"))
+        with pytest.raises(BatchWriteError) as excinfo:
+            writer.flush()
+        assert excinfo.value.symbols == ["AAA", "BBB"]
+        assert isinstance(excinfo.value.__cause__, OSError)
+        assert writer.symbols == []
+
+    def test_indices_table(self, tmp_path):
+        writer = TickerBatchWriter(tmp_path, table="indices")
+        writer.add("^VIX", _bar(date(2024, 1, 2), 15.0, "^VIX"))
+        assert writer.flush() == {"^VIX": 1}
+        assert (tmp_path / "indices" / "data.parquet").exists()
+
+    def test_rejects_table_dir(self, tmp_path):
+        with pytest.raises(ValueError, match="data root"):
+            TickerBatchWriter(tmp_path / "ohlcv")

@@ -6,7 +6,8 @@ available depth (targeting 1990) using yfinance period="max".
 
 For each onboarded ticker whose existing data starts after EARLIEST_TARGET,
 fetches the full available history and merges it into the ohlcv table.
-Deduplication is handled by save_ticker_data, so re-runs are safe.
+Rows are written in batches by fetch.TickerBatchWriter, which deduplicates
+on (symbol, period_start_date), so re-runs are safe.
 
 Tickers whose earliest date is already at or before EARLIEST_TARGET are
 marked complete immediately — no network call needed.
@@ -35,7 +36,7 @@ from datetime import date
 from pathlib import Path
 
 from market_data.config import cfg as _cfg
-from market_data.fetch import fetch_max_history, save_ticker_data
+from market_data.fetch import BatchWriteError, TickerBatchWriter, fetch_max_history
 from market_data.storage import read_table
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,26 @@ def run(
     )
 
     fetched = failed = 0
+    writer = TickerBatchWriter(data_dir)
+
+    def flush() -> None:
+        # A ticker is complete only once the write holding its rows succeeds.
+        nonlocal fetched, failed
+        try:
+            counts = writer.flush()
+        except BatchWriteError as exc:
+            reason = str(exc)[:200]
+            logger.warning("    WRITE FAIL %s: %s", ", ".join(exc.symbols), reason)
+            for symbol in exc.symbols:
+                state["extend_history_failures"][symbol] = reason
+            failed += len(exc.symbols)
+            _save_state(state)
+            return
+        for symbol, new_rows in counts.items():
+            logger.info("    SAVED %s: %d new rows", symbol, new_rows)
+            state["extend_history_completed"].append(symbol)
+        fetched += len(counts)
+        _save_state(state)
 
     for i, ticker in enumerate(batch, 1):
         if dry_run:
@@ -226,18 +247,25 @@ def run(
             _save_state(state)
             continue
 
-        new_rows = save_ticker_data(ticker, df, data_dir)
-        earliest = df["date"].min()
+        try:
+            writer.add(ticker, df)
+        except Exception as exc:  # noqa: BLE001
+            reason = str(exc)[:200]
+            logger.warning("    FAIL %s: %s", ticker, reason)
+            state["extend_history_failures"][ticker] = reason
+            failed += 1
+            _save_state(state)
+            continue
         logger.info(
-            "    OK   %s: %d rows (%d new, earliest=%s)",
-            ticker, len(df), new_rows, earliest,
+            "    OK   %s: %d rows (earliest=%s)", ticker, len(df), df["date"].min(),
         )
-        state["extend_history_completed"].append(ticker)
-        fetched += 1
-        _save_state(state)
+        if writer.full:
+            flush()
 
         if i < len(batch):
             time.sleep(SLEEP_BETWEEN_CALLS)
+
+    flush()
 
     if not dry_run:
         logger.info(

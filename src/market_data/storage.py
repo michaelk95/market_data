@@ -21,6 +21,9 @@ Public API
 write_table(df, table_name, data_dir) -> int
     Merge df into the table; return number of net new rows written.
 
+write_table_counts(df, table_name, data_dir) -> dict[str, int]
+    Same merge; return net new rows per symbol (symbols with none are absent).
+
 read_table(table_name, data_dir, *, start_date, end_date,
            symbols, series_ids, columns) -> pd.DataFrame
     Read rows from the table, with optional pushdown-style filters.
@@ -44,7 +47,13 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["read_macro_as_of", "read_macro_revisions", "read_table", "write_table"]
+__all__ = [
+    "read_macro_as_of",
+    "read_macro_revisions",
+    "read_table",
+    "write_table",
+    "write_table_counts",
+]
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -74,36 +83,25 @@ def write_table(
     int
         Number of rows that were genuinely new (i.e. not already present).
     """
-    if table_name not in TABLE_SCHEMAS:
-        raise ValueError(
-            f"Unknown table '{table_name}'. Valid names: {sorted(TABLE_SCHEMAS)}"
-        )
-    if df.empty:
-        return 0
+    return sum(len(added) for added in _write(df, table_name, data_dir))
 
-    validate_bitemporal_columns(df)
 
-    dedup_keys = DEDUP_KEYS[table_name]
-    sort_keys = SORT_KEYS[table_name]
-    partition_cols = PARTITION_COLS[table_name]
-    table_dir = data_dir / table_name
+def write_table_counts(
+    df: pd.DataFrame,
+    table_name: str,
+    data_dir: Path,
+) -> dict[str, int]:
+    """Merge *df* into the unified table like ``write_table``, counting per symbol.
 
-    df = df.copy()
-    total_new = 0
-
-    if not partition_cols:
-        # Non-partitioned table: single data.parquet
-        path = table_dir / "data.parquet"
-        total_new = _merge_write(path, df, dedup_keys, sort_keys)
-    else:
-        # Partitioned by year extracted from period_start_date
-        df["_year"] = pd.to_datetime(df["period_start_date"]).dt.year
-        for year, group in df.groupby("_year"):
-            part_path = table_dir / f"year={int(year)}" / "data.parquet"
-            rows_to_write = group.drop(columns=["_year"])
-            total_new += _merge_write(part_path, rows_to_write, dedup_keys, sort_keys)
-
-    return total_new
+    Lets a caller write many symbols in one call (each year partition is
+    rewritten once) and still report net-new rows per symbol.  Symbols whose
+    rows were all already stored are absent from the result.
+    """
+    added = [rows for rows in _write(df, table_name, data_dir) if not rows.empty]
+    if not added:
+        return {}
+    counts = pd.concat(added, ignore_index=True)["symbol"].value_counts()
+    return {str(symbol): int(n) for symbol, n in counts.items()}
 
 
 def read_table(
@@ -297,6 +295,36 @@ def read_macro_revisions(
 # ---------------------------------------------------------------------------
 
 
+def _write(df: pd.DataFrame, table_name: str, data_dir: Path) -> list[pd.DataFrame]:
+    """Merge *df* into *table_name*; return the rows actually added, per file."""
+    if table_name not in TABLE_SCHEMAS:
+        raise ValueError(
+            f"Unknown table '{table_name}'. Valid names: {sorted(TABLE_SCHEMAS)}"
+        )
+    if df.empty:
+        return []
+
+    validate_bitemporal_columns(df)
+
+    dedup_keys = DEDUP_KEYS[table_name]
+    sort_keys = SORT_KEYS[table_name]
+    partition_cols = PARTITION_COLS[table_name]
+    table_dir = data_dir / table_name
+
+    if not partition_cols:
+        # Non-partitioned table: single data.parquet
+        return [_merge_write(table_dir / "data.parquet", df, dedup_keys, sort_keys)]
+
+    # Partitioned by year extracted from period_start_date
+    years = pd.to_datetime(df["period_start_date"]).dt.year
+    return [
+        _merge_write(
+            table_dir / f"year={int(year)}" / "data.parquet", group, dedup_keys, sort_keys
+        )
+        for year, group in df.groupby(years)
+    ]
+
+
 def _empty_df(table_name: str, columns: list[str] | None) -> pd.DataFrame:
     """Return an empty DataFrame whose columns match the table schema (or the
     requested *columns* projection).  This avoids KeyError when callers do
@@ -306,25 +334,29 @@ def _empty_df(table_name: str, columns: list[str] | None) -> pd.DataFrame:
     return pd.DataFrame(columns=cols)
 
 
+# Temporary column marking incoming rows during a merge; never stored.
+_NEW_ROW = "_is_new_row"
+
+
 def _merge_write(
     path: Path,
     new_df: pd.DataFrame,
     dedup_keys: list[str],
     sort_keys: list[str],
-) -> int:
+) -> pd.DataFrame:
     """Merge *new_df* into the parquet at *path*, dedup, sort, and save atomically.
 
-    Returns the number of net new rows (after - before).
+    Stored rows come first, so they win over incoming rows with the same
+    *dedup_keys*.  Returns the rows of *new_df* that were actually added.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    incoming = new_df.assign(**{_NEW_ROW: True})
     if path.exists():
-        existing = pd.read_parquet(path)
-        before = len(existing)
-        combined = pd.concat([existing, new_df], ignore_index=True)
+        existing = pd.read_parquet(path).assign(**{_NEW_ROW: False})
+        combined = pd.concat([existing, incoming], ignore_index=True)
     else:
-        before = 0
-        combined = new_df.copy()
+        combined = incoming
 
     combined = (
         combined
@@ -332,13 +364,13 @@ def _merge_write(
         .sort_values(sort_keys)
         .reset_index(drop=True)
     )
-    after = len(combined)
+    is_new = combined.pop(_NEW_ROW).astype(bool)
 
     tmp = path.with_name(path.stem + ".tmp.parquet")
     combined.to_parquet(tmp, index=False)
     tmp.replace(path)
 
-    return after - before
+    return combined[is_new]
 
 
 def _get_partition_files(

@@ -44,7 +44,7 @@ from pathlib import Path
 import pandas as pd
 
 from market_data.config import cfg as _cfg
-from market_data.fetch import fetch_date_range, save_ticker_data
+from market_data.fetch import BatchWriteError, TickerBatchWriter, fetch_date_range
 from market_data.storage import read_table
 
 logger = logging.getLogger(__name__)
@@ -202,6 +202,26 @@ def run(
     )
 
     fetched = failed = 0
+    writer = TickerBatchWriter(data_dir)
+
+    def flush() -> None:
+        # A ticker is complete only once the write holding its rows succeeds.
+        nonlocal fetched, failed
+        try:
+            counts = writer.flush()
+        except BatchWriteError as exc:
+            reason = str(exc)[:200]
+            logger.warning("    WRITE FAIL %s: %s", ", ".join(exc.symbols), reason)
+            for symbol in exc.symbols:
+                state["backfill_failures"][symbol] = reason
+            failed += len(exc.symbols)
+            _save_state(state)
+            return
+        for symbol, new_rows in counts.items():
+            logger.info("    SAVED %s: %d new rows", symbol, new_rows)
+            state["backfill_completed"].append(symbol)
+        fetched += len(counts)
+        _save_state(state)
 
     for i, job in enumerate(batch, 1):
         ticker = job["ticker"]
@@ -238,14 +258,23 @@ def run(
             _save_state(state)
             continue
 
-        new_rows = save_ticker_data(ticker, df, data_dir)
-        logger.info("    OK   %s: %d rows (%d new)", ticker, len(df), new_rows)
-        state["backfill_completed"].append(ticker)
-        fetched += 1
-        _save_state(state)
+        try:
+            writer.add(ticker, df)
+        except Exception as exc:  # noqa: BLE001
+            reason = str(exc)[:200]
+            logger.warning("    FAIL %s: %s", ticker, reason)
+            state["backfill_failures"][ticker] = reason
+            failed += 1
+            _save_state(state)
+            continue
+        logger.info("    OK   %s: %d rows", ticker, len(df))
+        if writer.full:
+            flush()
 
         if i < len(batch):
             time.sleep(SLEEP_BETWEEN_CALLS)
+
+    flush()
 
     if not dry_run:
         logger.info(

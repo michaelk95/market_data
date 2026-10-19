@@ -136,16 +136,14 @@ class TestRun:
         return tmp_path / "state.json"
 
     @patch("market_data.fetch_backfill.fetch_date_range")
-    @patch("market_data.fetch_backfill.save_ticker_data")
     @patch("market_data.fetch_backfill.STATE_FILE")
     def test_fetches_and_saves_pending_tickers(
-        self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
+        self, mock_state_path, mock_fetch, hist_file, tmp_path, state_file
     ):
         mock_state_path.__str__ = lambda s: str(state_file)
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = state_file.write_text
         mock_fetch.return_value = _ohlcv("DEAD1")
-        mock_save.return_value = 5
 
         result = run(
             constituent_path=hist_file,
@@ -159,15 +157,13 @@ class TestRun:
         assert result["failed"] == 0
 
     @patch("market_data.fetch_backfill.fetch_date_range")
-    @patch("market_data.fetch_backfill.save_ticker_data")
     @patch("market_data.fetch_backfill.STATE_FILE")
     def test_batch_size_limits_fetches(
-        self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
+        self, mock_state_path, mock_fetch, hist_file, tmp_path, state_file
     ):
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = state_file.write_text
         mock_fetch.return_value = _ohlcv("DEAD1")
-        mock_save.return_value = 5
 
         result = run(
             constituent_path=hist_file,
@@ -181,10 +177,9 @@ class TestRun:
         assert result["remaining"] == 1
 
     @patch("market_data.fetch_backfill.fetch_date_range")
-    @patch("market_data.fetch_backfill.save_ticker_data")
     @patch("market_data.fetch_backfill.STATE_FILE")
     def test_empty_data_recorded_as_failure(
-        self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
+        self, mock_state_path, mock_fetch, hist_file, tmp_path, state_file
     ):
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = state_file.write_text
@@ -199,13 +194,12 @@ class TestRun:
 
         assert result["failed"] == 2
         assert result["fetched"] == 0
-        mock_save.assert_not_called()
+        assert not (tmp_path / "data" / "ohlcv").exists()
 
     @patch("market_data.fetch_backfill.fetch_date_range")
-    @patch("market_data.fetch_backfill.save_ticker_data")
     @patch("market_data.fetch_backfill.STATE_FILE")
     def test_dry_run_makes_no_network_calls(
-        self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
+        self, mock_state_path, mock_fetch, hist_file, tmp_path, state_file
     ):
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = state_file.write_text
@@ -218,17 +212,16 @@ class TestRun:
         )
 
         mock_fetch.assert_not_called()
-        mock_save.assert_not_called()
+        assert not (tmp_path / "data" / "ohlcv").exists()
 
     def test_missing_constituent_file_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="market-data-fetch-constituent-history"):
             run(constituent_path=tmp_path / "nonexistent.parquet")
 
     @patch("market_data.fetch_backfill.fetch_date_range")
-    @patch("market_data.fetch_backfill.save_ticker_data")
     @patch("market_data.fetch_backfill.STATE_FILE")
     def test_completed_tickers_persisted_to_state(
-        self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
+        self, mock_state_path, mock_fetch, hist_file, tmp_path, state_file
     ):
         written = {}
 
@@ -238,7 +231,6 @@ class TestRun:
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = _write
         mock_fetch.return_value = _ohlcv("DEAD1")
-        mock_save.return_value = 5
 
         run(
             constituent_path=hist_file,
@@ -251,10 +243,9 @@ class TestRun:
         assert "DEAD2" in written["state"]["backfill_completed"]
 
     @patch("market_data.fetch_backfill.fetch_date_range")
-    @patch("market_data.fetch_backfill.save_ticker_data")
     @patch("market_data.fetch_backfill.STATE_FILE")
     def test_existing_ohlcv_file_skipped(
-        self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
+        self, mock_state_path, mock_fetch, hist_file, tmp_path, state_file
     ):
         data_dir = tmp_path / "data"
         save_ticker_data("DEAD1", _ohlcv("DEAD1"), data_dir)
@@ -262,7 +253,6 @@ class TestRun:
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = state_file.write_text
         mock_fetch.return_value = _ohlcv("DEAD2")
-        mock_save.return_value = 5
 
         result = run(
             constituent_path=hist_file,
@@ -275,3 +265,64 @@ class TestRun:
         fetched_tickers = [c.args[0] for c in mock_fetch.call_args_list]
         assert "DEAD1" not in fetched_tickers
         assert "DEAD2" in fetched_tickers
+
+
+# ---------------------------------------------------------------------------
+# run() — batched ohlcv writes
+# ---------------------------------------------------------------------------
+
+class TestRunBatchedWrites:
+    @pytest.fixture()
+    def env(self, tmp_path, monkeypatch):
+        from market_data import fetch, fetch_backfill
+
+        hist_file = tmp_path / "constituent_history.parquet"
+        _hist([
+            ("DEAD1", "2000-01-01", "2010-06-15"),
+            ("DEAD2", "2005-01-01", "2015-03-01"),
+            ("DEAD3", "2001-01-01", "2012-03-01"),
+        ]).to_parquet(hist_file, index=False)
+        state_file = tmp_path / "state.json"
+        env: dict = {
+            "hist_file": hist_file, "data_dir": tmp_path / "data",
+            "state_file": state_file, "writes": [],
+        }
+        monkeypatch.setattr(fetch_backfill, "STATE_FILE", state_file)
+        monkeypatch.setattr(fetch_backfill, "SLEEP_BETWEEN_CALLS", 0)
+        monkeypatch.setattr(fetch, "DEFAULT_WRITE_BATCH_SYMBOLS", 2)
+        monkeypatch.setattr(fetch_backfill, "fetch_date_range", lambda t, s, e: _ohlcv(t))
+        real_write = fetch.write_table_counts
+
+        def spy(df, table, data_dir):
+            env["writes"].append(sorted(df["symbol"].unique()))
+            if env.get("fail_write"):
+                raise OSError("disk full")
+            return real_write(df, table, data_dir)
+
+        monkeypatch.setattr(fetch, "write_table_counts", spy)
+        return env
+
+    def _run(self, env):
+        return run(
+            constituent_path=env["hist_file"], data_dir=env["data_dir"],
+            batch_size=0, dry_run=False,
+        )
+
+    def test_one_write_per_batch_of_symbols(self, env):
+        result = self._run(env)
+
+        assert [len(w) for w in env["writes"]] == [2, 1]
+        assert result["fetched"] == 3
+        saved = json.loads(env["state_file"].read_text())
+        assert sorted(saved["backfill_completed"]) == ["DEAD1", "DEAD2", "DEAD3"]
+
+    def test_failed_write_leaves_batch_incomplete(self, env):
+        env["fail_write"] = True
+
+        result = self._run(env)
+
+        assert result["fetched"] == 0
+        assert result["failed"] == 3
+        saved = json.loads(env["state_file"].read_text())
+        assert saved["backfill_completed"] == []
+        assert set(saved["backfill_failures"]) == {"DEAD1", "DEAD2", "DEAD3"}
