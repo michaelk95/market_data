@@ -155,6 +155,28 @@ class TestMergeRun:
 
         assert first_count == second_count
 
+    def test_ignores_year_partitions_next_to_flat_files(self, tmp_path):
+        """Migrated year=YYYY/ partitions are a stale snapshot; only the flat
+        per-ticker files the collector keeps updating are merged."""
+        data_dir = tmp_path / "ohlcv"
+        data_dir.mkdir()
+        out = tmp_path / "merged.parquet"
+
+        _make_ohlcv("AAPL", DATES_3, [185.0, 186.0, 187.0]).to_parquet(
+            data_dir / "AAPL.parquet", index=False
+        )
+        partition = data_dir / "year=2024"
+        partition.mkdir()
+        _make_ohlcv("STALE", DATES_2, [1.0, 2.0]).to_parquet(
+            partition / "data.parquet", index=False
+        )
+
+        merge.run(data_dir=data_dir, out=out)
+        result = pd.read_parquet(out)
+
+        assert set(result["symbol"]) == {"AAPL"}
+        assert len(result) == len(DATES_3)
+
     def test_creates_parent_dir_for_output(self, tmp_path):
         data_dir = tmp_path / "ohlcv"
         data_dir.mkdir()

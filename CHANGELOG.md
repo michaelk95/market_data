@@ -4,6 +4,19 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.10.4] — 2026-10-19 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+
+### Changed
+- README storage paths and data formats now match what each collector
+  writes: OHLCV is `data/ohlcv/<SYMBOL>.parquet` (not `data/<SYMBOL>.parquet`),
+  macro is one bitemporal `data/macro/data.parquet`, fundamentals is
+  `data/fundamentals/year=YYYY/data.parquet` with bitemporal columns, and
+  analyst estimates are documented as their own table. Added a note on the
+  two storage layouts, a bitemporal column reference, and the missing CLI
+  commands (`fetch-analyst-estimates`, `extend-history`, `health`, `agent`).
+- `merge.py` docstring describes the flat `data/ohlcv/` input and why the
+  migrated `year=YYYY/` partitions are not read; new test pins that.
+
 ## [0.10.3] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
 
 ### Changed

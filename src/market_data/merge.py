@@ -1,14 +1,20 @@
 """
 merge.py
 --------
-Combines all per-ticker Parquet files in the data/ directory into a single
-merged.parquet file ready for the paper_trading backtest engine.
+Combines the flat per-ticker OHLCV files (data/ohlcv/<SYMBOL>.parquet, written
+by fetch.save_ticker_data) into a single data/merged.parquet for the
+paper_trading backtest engine. The output keeps the flat schema (date, symbol,
+open, high, low, close, volume), which paper_trading reads.
+
+Only top-level *.parquet files are read. The year=YYYY/ partitions that
+scripts/migrate_flat_tables.py creates alongside them are a one-off snapshot
+the collector does not update, so they are deliberately ignored.
 
 Usage
 -----
-    python merge.py                       # reads data/, writes data/merged.parquet
-    python merge.py --data-dir ./data     # explicit paths
-    python merge.py --out ./merged.parquet
+    market-data-merge                          # reads data/ohlcv/, writes data/merged.parquet
+    market-data-merge --data-dir ./data/ohlcv  # explicit paths
+    market-data-merge --out ./merged.parquet
 """
 
 from __future__ import annotations
@@ -80,7 +86,7 @@ def main() -> None:
     setup_logging()
 
     parser = argparse.ArgumentParser(
-        description="Merge per-ticker Parquet files into one file for the backtest engine."
+        description="Merge per-ticker OHLCV Parquet files into one file for the backtest engine."
     )
     parser.add_argument(
         "--data-dir",
