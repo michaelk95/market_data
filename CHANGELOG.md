@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.11.0] — 2026-10-19 ([#NN](https://github.com/michaelk95/market_data/pull/NN))
+## [0.11.0] — 2026-10-19 ([#82](https://github.com/michaelk95/market_data/pull/82))
 
 ### Changed
 - The ohlcv, indices and options collectors now write the bitemporal tables
