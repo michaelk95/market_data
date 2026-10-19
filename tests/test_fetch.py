@@ -1,12 +1,15 @@
 """
 Tests for fetch.py: _normalize(), save_ticker_data(), load_ticker_data().
 
+save/load go through the bitemporal store (storage.write_table/read_table).
+
 No network calls are made; all yfinance interactions are tested via fixtures
 that replicate the real DataFrame shapes yfinance returns.
 """
 
 from datetime import date
 
+import migrate_flat_tables
 import pandas as pd
 import pytest
 
@@ -16,6 +19,8 @@ from market_data.fetch import (
     load_ticker_data,
     save_ticker_data,
 )
+from market_data.schema import TABLE_SCHEMAS
+from market_data.storage import read_table
 
 # ---------------------------------------------------------------------------
 # _normalize()
@@ -120,123 +125,126 @@ class TestNormalize:
         assert list(result.index) == list(range(len(result)))
 
 
+
+
 # ---------------------------------------------------------------------------
-# save_ticker_data() + load_ticker_data()
+# save_ticker_data() + load_ticker_data()  (bitemporal store)
 # ---------------------------------------------------------------------------
+
+
+def _bar(day: date, close: float, symbol: str = "AAPL") -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": [day],
+            "symbol": [symbol],
+            "open": [close - 1.0],
+            "high": [close + 1.0],
+            "low": [close - 2.0],
+            "close": [close],
+            "volume": [55_000_000.0],
+        }
+    )
 
 
 class TestSaveTickerData:
-    def test_creates_new_file(self, ohlcv_df, tmp_path):
-        data_dir = tmp_path / "ohlcv"
-        rows_added = save_ticker_data("AAPL", ohlcv_df, data_dir)
+    def test_writes_year_partition_under_data_root(self, ohlcv_df, tmp_path):
+        rows_added = save_ticker_data("AAPL", ohlcv_df, tmp_path)
 
         assert rows_added == 2
-        assert (data_dir / "AAPL.parquet").exists()
+        assert (tmp_path / "ohlcv" / "year=2024" / "data.parquet").exists()
+        assert not (tmp_path / "ohlcv" / "AAPL.parquet").exists()
+        assert not (tmp_path / "ohlcv" / "ohlcv").exists()
+
+    def test_rows_follow_bitemporal_schema(self, ohlcv_df, tmp_path):
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        stored = read_table("ohlcv", tmp_path)
+        assert list(stored.columns) == TABLE_SCHEMAS["ohlcv"].names
+        assert list(stored["period_start_date"]) == list(ohlcv_df["date"])
+        assert (stored["report_time_marker"] == "post-market").all()
+
+    def test_rows_split_across_year_partitions(self, tmp_path):
+        df = pd.concat([_bar(date(2023, 12, 29), 180.0), _bar(date(2024, 1, 2), 185.0)])
+        assert save_ticker_data("AAPL", df, tmp_path) == 2
+        assert (tmp_path / "ohlcv" / "year=2023" / "data.parquet").exists()
+        assert (tmp_path / "ohlcv" / "year=2024" / "data.parquet").exists()
+
+    def test_indices_table_is_single_file(self, ohlcv_df, tmp_path):
+        vix = ohlcv_df.assign(symbol="^VIX")
+        assert save_ticker_data("^VIX", vix, tmp_path, table="indices") == 2
+        assert (tmp_path / "indices" / "data.parquet").exists()
+        assert not (tmp_path / "ohlcv").exists()
+
+    def test_table_dir_instead_of_root_raises(self, ohlcv_df, tmp_path):
+        """Passing data/ohlcv (the old argument) would nest ohlcv/ohlcv/."""
+        with pytest.raises(ValueError, match="data root"):
+            save_ticker_data("AAPL", ohlcv_df, tmp_path / "ohlcv")
 
     def test_returns_zero_for_empty_df(self, tmp_path):
-        data_dir = tmp_path / "ohlcv"
         empty = pd.DataFrame(columns=OHLCV_COLS)
-        assert save_ticker_data("AAPL", empty, data_dir) == 0
-        assert not (data_dir / "AAPL.parquet").exists()
+        assert save_ticker_data("AAPL", empty, tmp_path) == 0
+        assert not (tmp_path / "ohlcv").exists()
 
     def test_idempotent_on_duplicate_rows(self, ohlcv_df, tmp_path):
-        """Saving the same data twice results in zero additional rows."""
-        data_dir = tmp_path / "ohlcv"
-        save_ticker_data("AAPL", ohlcv_df, data_dir)
-        added = save_ticker_data("AAPL", ohlcv_df, data_dir)
-
-        assert added == 0
-        stored = load_ticker_data("AAPL", data_dir)
-        assert len(stored) == 2
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        assert save_ticker_data("AAPL", ohlcv_df, tmp_path) == 0
+        assert len(load_ticker_data("AAPL", tmp_path)) == 2
 
     def test_appends_new_rows(self, ohlcv_df, tmp_path):
-        data_dir = tmp_path / "ohlcv"
-        save_ticker_data("AAPL", ohlcv_df, data_dir)
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        assert save_ticker_data("AAPL", _bar(date(2024, 1, 4), 189.0), tmp_path) == 1
+        assert len(load_ticker_data("AAPL", tmp_path)) == 3
 
-        new_row = pd.DataFrame(
-            {
-                "date": [date(2024, 1, 4)],
-                "symbol": ["AAPL"],
-                "open": [188.0],
-                "high": [190.0],
-                "low": [187.0],
-                "close": [189.0],
-                "volume": [55_000_000.0],
-            }
-        )
-        added = save_ticker_data("AAPL", new_row, data_dir)
-
-        assert added == 1
-        stored = load_ticker_data("AAPL", data_dir)
+    def test_overlap_keeps_existing_row(self, ohlcv_df, tmp_path):
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        overlap = pd.concat([_bar(date(2024, 1, 2), 999.0), _bar(date(2024, 1, 5), 191.0)])
+        assert save_ticker_data("AAPL", overlap, tmp_path) == 1
+        stored = load_ticker_data("AAPL", tmp_path)
         assert len(stored) == 3
+        assert stored.loc[stored["date"] == date(2024, 1, 2), "close"].item() == pytest.approx(186.5)
 
-    def test_deduplicates_overlap(self, ohlcv_df, tmp_path):
-        """When new_df overlaps existing on (date, symbol), duplicates are dropped."""
-        data_dir = tmp_path / "ohlcv"
-        save_ticker_data("AAPL", ohlcv_df, data_dir)
+    def test_timestamp_dates_dedup_against_date_objects(self, ohlcv_df, tmp_path):
+        """A bar whose date arrives as a Timestamp must still match the stored date."""
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        again = ohlcv_df.assign(date=pd.to_datetime(ohlcv_df["date"]))
+        assert save_ticker_data("AAPL", again, tmp_path) == 0
 
-        # 2024-01-02 already stored; 2024-01-05 is genuinely new
-        overlap = pd.DataFrame(
-            {
-                "date": [date(2024, 1, 2), date(2024, 1, 5)],
-                "symbol": ["AAPL", "AAPL"],
-                "open": [999.0, 190.0],
-                "high": [999.0, 192.0],
-                "low": [999.0, 189.0],
-                "close": [999.0, 191.0],
-                "volume": [1.0, 60_000_000.0],
-            }
-        )
-        added = save_ticker_data("AAPL", overlap, data_dir)
+    def test_other_symbols_untouched(self, ohlcv_df, tmp_path):
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        save_ticker_data("MSFT", ohlcv_df.assign(symbol="MSFT"), tmp_path)
+        assert len(load_ticker_data("AAPL", tmp_path)) == 2
+        assert len(load_ticker_data("MSFT", tmp_path)) == 2
 
-        assert added == 1
-        stored = load_ticker_data("AAPL", data_dir)
-        assert len(stored) == 3
+    def test_live_write_after_migration_adds_nothing(self, ohlcv_df, tmp_path):
+        """Rows migrated from a flat file and the same bars saved live are identical keys."""
+        flat = ohlcv_df.assign(volume=ohlcv_df["volume"].astype("int64"))
+        (tmp_path / "ohlcv").mkdir()
+        flat.to_parquet(tmp_path / "ohlcv" / "AAPL.parquet", index=False)
+        assert migrate_flat_tables.run("ohlcv", tmp_path) == 2
 
-    def test_creates_parent_dir(self, ohlcv_df, tmp_path):
-        """save_ticker_data creates missing parent directories automatically."""
-        data_dir = tmp_path / "deep" / "nested" / "ohlcv"
-        save_ticker_data("AAPL", ohlcv_df, data_dir)
-        assert (data_dir / "AAPL.parquet").exists()
-
-    def test_sorted_by_date_ascending(self, tmp_path):
-        """Stored data is always sorted by date ascending."""
-        data_dir = tmp_path / "ohlcv"
-        df = pd.DataFrame(
-            {
-                "date": [date(2024, 1, 3), date(2024, 1, 2)],  # out of order
-                "symbol": ["AAPL", "AAPL"],
-                "open": [186.0, 185.0],
-                "high": [188.0, 187.0],
-                "low": [185.0, 184.0],
-                "close": [187.0, 186.5],
-                "volume": [45e6, 50e6],
-            }
-        )
-        save_ticker_data("AAPL", df, data_dir)
-        stored = load_ticker_data("AAPL", data_dir)
-        dates = list(stored["date"])
-        assert dates == sorted(dates)
+        assert save_ticker_data("AAPL", ohlcv_df, tmp_path) == 0
+        assert len(read_table("ohlcv", tmp_path)) == 2
 
 
 class TestLoadTickerData:
-    def test_returns_none_for_missing_file(self, tmp_path):
-        result = load_ticker_data("NONEXISTENT", tmp_path / "ohlcv")
-        assert result is None
+    def test_returns_none_when_symbol_absent(self, ohlcv_df, tmp_path):
+        assert load_ticker_data("NONEXISTENT", tmp_path) is None
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        assert load_ticker_data("NONEXISTENT", tmp_path) is None
 
-    def test_round_trip_columns(self, ohlcv_df, tmp_path):
-        data_dir = tmp_path / "ohlcv"
-        save_ticker_data("AAPL", ohlcv_df, data_dir)
-        loaded = load_ticker_data("AAPL", data_dir)
+    def test_round_trip_flat_columns(self, ohlcv_df, tmp_path):
+        save_ticker_data("AAPL", ohlcv_df, tmp_path)
+        loaded = load_ticker_data("AAPL", tmp_path)
+        assert list(loaded.columns) == OHLCV_COLS
+        pd.testing.assert_frame_equal(loaded, ohlcv_df)
 
-        assert loaded is not None
-        assert list(loaded.columns) == list(ohlcv_df.columns)
+    def test_sorted_by_date_ascending(self, tmp_path):
+        df = pd.concat([_bar(date(2024, 1, 3), 187.0), _bar(date(2024, 1, 2), 186.5)])
+        save_ticker_data("AAPL", df, tmp_path)
+        dates = list(load_ticker_data("AAPL", tmp_path)["date"])
+        assert dates == sorted(dates)
 
-    def test_round_trip_values(self, ohlcv_df, tmp_path):
-        data_dir = tmp_path / "ohlcv"
-        save_ticker_data("AAPL", ohlcv_df, data_dir)
-        loaded = load_ticker_data("AAPL", data_dir)
-
-        assert len(loaded) == 2
-        assert loaded["close"].iloc[0] == pytest.approx(186.5)
-        assert loaded["close"].iloc[1] == pytest.approx(187.0)
+    def test_reads_indices_table(self, ohlcv_df, tmp_path):
+        save_ticker_data("^VIX", ohlcv_df.assign(symbol="^VIX"), tmp_path, table="indices")
+        loaded = load_ticker_data("^VIX", tmp_path, table="indices")
+        assert loaded["date"].max() == date(2024, 1, 3)
+        assert load_ticker_data("^VIX", tmp_path) is None  # not in ohlcv

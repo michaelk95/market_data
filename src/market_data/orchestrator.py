@@ -9,7 +9,7 @@ Each run executes in order:
                      haven't been fetched yet, and pull their full 10-year history.
 
   2. UPDATE        — for every already-onboarded ticker, pull any new trading days
-                     since the last run and append them to their Parquet file.
+                     since the last run and append them to the ohlcv table.
 
   3. FUNDAMENTALS  — (optional, monthly) snapshot market cap and valuation ratios
                      for all onboarded tickers via yfinance.
@@ -29,8 +29,8 @@ Each run executes in order:
   6. MACRO         — (optional, daily) update FRED macro series (CPI, GDP,
                      Fed Funds rate, Treasury spread, unemployment, etc.).
 
-  7. MERGE         — (optional) rebuild data/merged.parquet from all per-ticker
-                     OHLCV files.
+  7. MERGE         — (optional) rebuild data/merged.parquet from the bitemporal
+                     ohlcv table (data/ohlcv/year=YYYY/).
 
 Progress is persisted in state.json so runs are safe to interrupt and resume.
 
@@ -71,7 +71,8 @@ logger = logging.getLogger(__name__)
 
 STATE_FILE = Path(_cfg.get("paths.state_file", "state.json"))
 TICKERS_FILE = Path(_cfg.get("paths.tickers_file", "tickers.csv"))
-DATA_DIR = Path(_cfg.get("paths.ohlcv_dir", "data/ohlcv"))
+# Data root: the ohlcv/, options/ ... tables live under it.
+DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 
 DEFAULT_BATCH_SIZE: int = _cfg.get("collection.batch_size", 50)
 SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.ohlcv", 5)
@@ -275,18 +276,18 @@ def step_options(
     )
 
     metrics.start_run("options")
-    fetch_options.run(symbols=batch, max_expiries=max_expiries)
+    rows_fetched = fetch_options.run(
+        symbols=batch, data_dir=DATA_DIR, max_expiries=max_expiries
+    )
 
     # Silent failure detection: warn if all symbols produced no options data
     if batch:
-        from market_data.fetch_options import OPTIONS_DIR
         for s in batch:
-            wrote = (OPTIONS_DIR / f"{s}.parquet").exists()
-            metrics.record_symbol_result(s, success=wrote, reason="no options file written" if not wrote else None)
-        options_written = sum(1 for s in batch if (OPTIONS_DIR / f"{s}.parquet").exists())
-        if options_written == 0:
+            ok = rows_fetched.get(s, 0) > 0
+            metrics.record_symbol_result(s, success=ok, reason=None if ok else "no options data")
+        if not any(rows_fetched.get(s, 0) > 0 for s in batch):
             logger.warning(
-                "OPTIONS silent failure: processed %d symbol(s) but no options files exist",
+                "OPTIONS silent failure: processed %d symbol(s) but none returned options data",
                 len(batch),
             )
 

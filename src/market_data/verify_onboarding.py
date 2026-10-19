@@ -1,15 +1,15 @@
 """
 verify_onboarding.py
 --------------------
-Checks that every ticker listed as onboarded in state.json actually has a
-corresponding data file on disk.  Any ticker that is "onboarded" in state but
-missing its parquet file is a ghost entry -- it will never be re-fetched by the
+Checks that every ticker listed as onboarded in state.json actually has rows
+in the bitemporal ohlcv table (data/ohlcv/year=YYYY/).  Any ticker that is
+"onboarded" in state but has no stored rows is a ghost entry -- it will never be re-fetched by the
 pipeline because the pipeline skips already-onboarded tickers.
 
 Usage:
     python -m market_data.verify_onboarding            # report only
     python -m market_data.verify_onboarding --fix      # remove ghosts from state.json
-    python -m market_data.verify_onboarding --state path/to/state.json --data path/to/ohlcv
+    python -m market_data.verify_onboarding --state path/to/state.json --data path/to/data
 """
 
 import argparse
@@ -18,19 +18,27 @@ import logging
 import sys
 from pathlib import Path
 
+from market_data.storage import read_table
+
 logger = logging.getLogger(__name__)
 
 STATE_FILE = Path("state.json")
-DATA_DIR   = Path("data/ohlcv")
+DATA_DIR   = Path("data")  # data root containing ohlcv/
+
+
+def stored_symbols(data_dir: Path) -> set[str]:
+    """Return the symbols with rows in the ohlcv table under the data root."""
+    return set(read_table("ohlcv", data_dir, columns=["symbol"])["symbol"])
 
 
 def check(state_file: Path, data_dir: Path) -> tuple[list[str], list[str]]:
     """
-    Compare the onboarded list in state.json against parquet files on disk.
+    Compare the onboarded list in state.json against symbols stored in the
+    ohlcv table under the data root *data_dir*.
 
     Returns:
-        ghosts  — onboarded in state but no file on disk (need re-onboarding)
-        orphans — file exists on disk but not in state   (informational only)
+        ghosts  — onboarded in state but no stored rows (need re-onboarding)
+        orphans — stored rows but not in state         (informational only)
     """
     if not state_file.exists():
         raise FileNotFoundError(f"State file not found: {state_file}")
@@ -38,7 +46,7 @@ def check(state_file: Path, data_dir: Path) -> tuple[list[str], list[str]]:
     raw = json.loads(state_file.read_text())
     onboarded: set[str] = set(raw.get("onboarded", []))
 
-    files_on_disk: set[str] = {p.stem for p in data_dir.glob("*.parquet")}
+    files_on_disk: set[str] = stored_symbols(data_dir)
 
     ghosts  = sorted(onboarded - files_on_disk)
     orphans = sorted(files_on_disk - onboarded)
@@ -61,7 +69,7 @@ def main() -> None:
     setup_logging()
 
     parser = argparse.ArgumentParser(
-        description="Verify onboarded tickers in state.json have data files on disk."
+        description="Verify onboarded tickers in state.json have rows in the ohlcv table."
     )
     parser.add_argument(
         "--fix",
@@ -69,7 +77,7 @@ def main() -> None:
         help="Remove ghost entries from state.json so they get re-onboarded.",
     )
     parser.add_argument("--state", default=str(STATE_FILE), help="Path to state.json")
-    parser.add_argument("--data",  default=str(DATA_DIR),   help="Path to ohlcv data directory")
+    parser.add_argument("--data",  default=str(DATA_DIR),   help="Data root containing the ohlcv/ table")
     args = parser.parse_args()
 
     state_file = Path(args.state)
@@ -79,22 +87,22 @@ def main() -> None:
 
     # --- Report ---
     n_onboarded = len(json.loads(state_file.read_text()).get("onboarded", []))
-    n_files = len(list(data_dir.glob("*.parquet")))
+    n_stored = len(stored_symbols(data_dir))
     logger.info("Onboarded in state: %d", n_onboarded)
-    logger.info("Files on disk: %d", n_files)
+    logger.info("Symbols in ohlcv table: %d", n_stored)
 
     if ghosts:
         logger.warning(
-            "GHOSTS — %d ticker(s) onboarded in state but missing data file: %s",
+            "GHOSTS — %d ticker(s) onboarded in state but missing from the ohlcv table: %s",
             len(ghosts),
             ghosts,
         )
     else:
-        logger.info("OK  No ghosts — every onboarded ticker has a data file.")
+        logger.info("OK  No ghosts — every onboarded ticker has stored rows.")
 
     if orphans:
         logger.info(
-            "Orphans (file exists but not in state) — %d ticker(s): %s  "
+            "Orphans (stored but not in state) — %d ticker(s): %s  "
             "(informational — the pipeline will not re-fetch them.)",
             len(orphans),
             orphans,

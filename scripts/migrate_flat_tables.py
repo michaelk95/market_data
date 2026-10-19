@@ -22,12 +22,16 @@ Column mapping
   freshness checks stay honest.
 - Values are cast to ``schema.TABLE_SCHEMAS`` (e.g. ``volume`` int64 → float64).
 
+The mapping lives in ``market_data.flat_tables`` and is shared with the live
+writers, so migrated rows and rows written live deduplicate against each other.
+
 Files whose ``symbol`` column is not exactly their file name are skipped with a
 warning (the live ``data/ohlcv`` holds a stale multi-symbol ``merged.parquet``).
 
 The flat files are left in place, and re-running is safe: rows already in the
-table are deduplicated by ``write_table``, so a re-run picks up only rows the
-old collector added since the last run.
+table are deduplicated by ``write_table`` (the stored row wins), so a re-run
+picks up only rows the old collector added since the last run, including when
+the new writers have already stored some of the same bars (cutover re-sync).
 
 Usage
 -----
@@ -47,26 +51,18 @@ import pandas as pd
 import pyarrow as pa
 
 from market_data.config import cfg as _cfg
-from market_data.schema import TABLE_SCHEMAS, DataSource, ReportTimeMarker
+from market_data.flat_tables import (  # noqa: F401  (re-exported for callers)
+    FLAT_DATE_COLUMN,
+    REPORT_TIME_MARKER,
+    conform_to_schema,
+    to_bitemporal,
+)
 from market_data.storage import write_table
 
 logger = logging.getLogger("market_data.migrate_flat_tables")
 
 DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 DEFAULT_CHUNK_SIZE = 250
-
-# Date column in the old flat layout, per table.
-FLAT_DATE_COLUMN: dict[str, str] = {
-    "ohlcv": "date",
-    "indices": "date",
-    "options": "snapshot_date",
-}
-
-REPORT_TIME_MARKER: dict[str, ReportTimeMarker] = {
-    "ohlcv": ReportTimeMarker.POST_MARKET,
-    "indices": ReportTimeMarker.POST_MARKET,
-    "options": ReportTimeMarker.PRE_MARKET,
-}
 
 # File name of the unpartitioned table (indices), which sits next to the flat files.
 _UNPARTITIONED_FILE = "data.parquet"
@@ -96,32 +92,6 @@ def discover_flat_files(table_dir: Path, symbols: list[str] | None = None) -> li
         wanted = {s.upper() for s in symbols}
         files = [p for p in files if p.stem.upper() in wanted]
     return files
-
-
-def to_bitemporal(flat: pd.DataFrame, table: str, collected_at: pd.Timestamp) -> pd.DataFrame:
-    """Convert one flat file's rows to *table*'s bitemporal schema."""
-    date_col = FLAT_DATE_COLUMN[table]
-    df = flat.copy()
-    day = pd.to_datetime(df.pop(date_col)).dt.date
-    df["period_start_date"] = day
-    df["period_end_date"] = day
-    df["report_date"] = day
-    df["report_time_marker"] = REPORT_TIME_MARKER[table].value
-    df["source"] = DataSource.YFINANCE.value
-    df["collected_at"] = collected_at
-    if "expiry" in df.columns:
-        df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
-    return df
-
-
-def conform_to_schema(df: pd.DataFrame, table: str) -> pd.DataFrame:
-    """Cast *df* to ``TABLE_SCHEMAS[table]``: column order, types and units."""
-    schema = TABLE_SCHEMAS[table]
-    missing = [name for name in schema.names if name not in df.columns]
-    if missing:
-        raise ValueError(f"{table}: flat rows are missing columns {missing}")
-    arrow = pa.Table.from_pandas(df[schema.names], schema=schema, preserve_index=False)
-    return arrow.to_pandas(date_as_object=True)
 
 
 def _file_mtime(path: Path) -> pd.Timestamp:

@@ -5,10 +5,10 @@ Backfills historical OHLCV data for S&P 500 tickers that were delisted or
 removed from the index before the regular pipeline began tracking them.
 
 Source:  data/constituent_history.parquet   (built by fetch_constituent_history)
-Output:  data/ohlcv/<SYMBOL>.parquet        (same schema as the regular pipeline)
+Output:  data/ohlcv/year=YYYY/data.parquet  (the bitemporal ohlcv table)
 
-For each delisted ticker (date_removed is not NaT) that has no existing OHLCV
-file, this module fetches the full span of its S&P 500 membership using
+For each delisted ticker (date_removed is not NaT) that has no rows in the
+ohlcv table yet, this module fetches the full span of its S&P 500 membership using
 yfinance and stores it via the same atomic save used by the main pipeline.
 
 Tickers with multiple membership periods (e.g. AAL: 1996→1997, 2015→2024) are
@@ -45,11 +45,13 @@ import pandas as pd
 
 from market_data.config import cfg as _cfg
 from market_data.fetch import fetch_date_range, save_ticker_data
+from market_data.storage import read_table
 
 logger = logging.getLogger(__name__)
 
 STATE_FILE = Path(_cfg.get("paths.state_file", "state.json"))
-OHLCV_DIR = Path(_cfg.get("paths.ohlcv_dir", "data/ohlcv"))
+# Data root containing the ohlcv/ table.
+DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 CONSTITUENT_HISTORY_FILE = _cfg.resolve_path(
     "paths.constituent_history_file", "data/constituent_history.parquet"
 )
@@ -85,18 +87,19 @@ def _save_state(state: dict) -> None:
 
 def pending_tickers(
     constituent_df: pd.DataFrame,
-    ohlcv_dir: Path,
+    data_dir: Path,
     completed: set[str],
     failures: set[str],
 ) -> list[dict]:
-    """Return backfill jobs for delisted tickers that have no OHLCV file yet.
+    """Return backfill jobs for delisted tickers with no rows in the ohlcv table.
 
     Each entry is a dict with keys: ticker, start (date), end (date).
 
     Skips:
     - Active tickers (date_removed is NaT) — handled by the normal pipeline.
     - Tickers already in *completed* or *failures*.
-    - Tickers that already have a file under *ohlcv_dir* (assumed covered).
+    - Tickers that already have rows in the ohlcv table under the data root
+      *data_dir* (assumed covered).
 
     For tickers with multiple membership periods, start/end span the full
     range (earliest date_added → latest date_removed).
@@ -110,12 +113,15 @@ def pending_tickers(
         .reset_index()
     )
 
+    stored = read_table("ohlcv", data_dir, columns=["symbol"])
+    stored_symbols = set(stored["symbol"])
+
     jobs = []
     for row in grouped.itertuples(index=False):
         ticker = row.ticker
         if ticker in completed or ticker in failures:
             continue
-        if (ohlcv_dir / f"{ticker}.parquet").exists():
+        if ticker in stored_symbols:
             continue
         jobs.append({
             "ticker": ticker,
@@ -132,7 +138,7 @@ def pending_tickers(
 
 def run(
     constituent_path: Path = CONSTITUENT_HISTORY_FILE,
-    ohlcv_dir: Path = OHLCV_DIR,
+    data_dir: Path = DATA_DIR,
     batch_size: int = DEFAULT_BATCH_SIZE,
     dry_run: bool = False,
 ) -> dict:
@@ -142,8 +148,8 @@ def run(
     ----------
     constituent_path:
         Path to constituent_history.parquet.
-    ohlcv_dir:
-        Directory where per-ticker OHLCV parquets are stored.
+    data_dir:
+        Data root containing the bitemporal ``ohlcv/`` table.
     batch_size:
         Maximum number of tickers to fetch in a single run (0 = no limit).
     dry_run:
@@ -165,7 +171,7 @@ def run(
     completed: set[str] = set(state["backfill_completed"])
     failures: set[str] = set(state["backfill_failures"].keys())
 
-    jobs = pending_tickers(constituent_df, ohlcv_dir, completed, failures)
+    jobs = pending_tickers(constituent_df, data_dir, completed, failures)
 
     total_delisted = constituent_df["date_removed"].notna().sum()
     skipped_existing = total_delisted - len(jobs) - len(failures)
@@ -232,7 +238,7 @@ def run(
             _save_state(state)
             continue
 
-        new_rows = save_ticker_data(ticker, df, ohlcv_dir)
+        new_rows = save_ticker_data(ticker, df, data_dir)
         logger.info("    OK   %s: %d rows (%d new)", ticker, len(df), new_rows)
         state["backfill_completed"].append(ticker)
         fetched += 1
@@ -266,7 +272,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Backfill historical OHLCV for delisted S&P 500 constituents. "
-            "Reads data/constituent_history.parquet and writes to data/ohlcv/."
+            "Reads data/constituent_history.parquet and writes to the ohlcv table."
         )
     )
     parser.add_argument(

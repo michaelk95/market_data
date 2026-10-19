@@ -2,15 +2,17 @@
 Tests for verify_onboarding.py: check() and fix().
 
 Uses tmp_path so no real state.json or data/ directory is touched.
-Parquet files are only touched as placeholders (zero-byte touch is sufficient
-because check() only inspects filenames, not file contents).
+Symbols "on disk" are rows in the bitemporal ohlcv table under a data root.
 """
 
 import json
+from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
+from market_data.fetch import save_ticker_data
 from market_data.verify_onboarding import check, fix
 
 # ---------------------------------------------------------------------------
@@ -25,10 +27,22 @@ def _make_state(tmp_path: Path, onboarded: list[str]) -> Path:
 
 
 def _make_data_dir(tmp_path: Path, symbols: list[str]) -> Path:
-    data_dir = tmp_path / "ohlcv"
+    """Store one bar per symbol in the ohlcv table and return the data root."""
+    data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
-    for sym in symbols:
-        (data_dir / f"{sym}.parquet").touch()
+    if symbols:
+        bars = pd.DataFrame(
+            {
+                "date": [date(2024, 1, 2)] * len(symbols),
+                "symbol": symbols,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": 1.0,
+            }
+        )
+        save_ticker_data(symbols[0], bars, data_dir)
     return data_dir
 
 
@@ -84,8 +98,7 @@ class TestCheck:
     def test_empty_data_dir(self, tmp_path):
         """With no files on disk, every onboarded ticker is a ghost."""
         state_file = _make_state(tmp_path, ["AAPL", "MSFT"])
-        data_dir = tmp_path / "ohlcv"
-        data_dir.mkdir()
+        data_dir = _make_data_dir(tmp_path, [])
 
         ghosts, orphans = check(state_file, data_dir)
         assert set(ghosts) == {"AAPL", "MSFT"}
@@ -99,6 +112,16 @@ class TestCheck:
         ghosts, orphans = check(state_file, data_dir)
         assert ghosts == sorted(ghosts)
         assert orphans == sorted(orphans)
+
+    def test_flat_files_alone_are_not_on_disk(self, tmp_path):
+        """Leftover data/ohlcv/<SYMBOL>.parquet files no longer count."""
+        state_file = _make_state(tmp_path, ["AAPL"])
+        data_dir = _make_data_dir(tmp_path, [])
+        (data_dir / "ohlcv").mkdir()
+        (data_dir / "ohlcv" / "AAPL.parquet").touch()
+
+        ghosts, _ = check(state_file, data_dir)
+        assert ghosts == ["AAPL"]
 
     def test_raises_when_state_file_missing(self, tmp_path):
         data_dir = _make_data_dir(tmp_path, [])

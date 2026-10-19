@@ -4,6 +4,36 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.11.0] — 2026-10-19 ([#NN](https://github.com/michaelk95/market_data/pull/NN))
+
+### Changed
+- The ohlcv, indices and options collectors now write the bitemporal tables
+  through `storage.write_table` instead of flat per-symbol files:
+  `data/ohlcv/year=YYYY/data.parquet`, `data/options/year=YYYY/data.parquet`
+  and `data/indices/data.parquet`. New module `flat_tables.py` holds the
+  flat ↔ bitemporal conversion, shared with `scripts/migrate_flat_tables.py`
+  so live and migrated rows have identical keys and deduplicate cleanly.
+- Readers use the tables: `fetch_indices` (last stored date), `fetch_backfill`
+  (which symbols have history), `fetch_extend_history` (earliest date per
+  symbol, one table read for all tickers) and `verify_onboarding`.
+- `merge.py` builds `data/merged.parquet` from `read_table("ohlcv")` and still
+  emits the flat `date, symbol, open, high, low, close, volume` layout for
+  paper_trading. `volume` is now float64 (the table schema type).
+- Options step: `fetch_options.run` returns rows fetched per symbol, and the
+  orchestrator records symbols with no rows as failures ("no options data")
+  and warns when a whole batch returned nothing.
+
+### Breaking
+- Functions take the data root (`paths.data_dir`, `data/`) instead of a table
+  directory and raise `ValueError` if given one: `fetch.load_ticker_data`,
+  `fetch.save_ticker_data` (now returns rows written),
+  `fetch_options.save_options_snapshot(new_df, data_dir)`,
+  `fetch_backfill.run(data_dir=)`, `fetch_extend_history.run(data_dir=)`,
+  `verify_onboarding`, and `market-data-merge --data-dir`.
+- Flat `data/<table>/<SYMBOL>.parquet` files are no longer read. Re-run
+  `scripts/migrate_flat_tables.py --table all` right before deploying so
+  rows collected since the first migration reach the tables.
+
 ## [0.10.3] — 2026-10-17 ([#78](https://github.com/michaelk95/market_data/pull/78))
 
 ### Changed

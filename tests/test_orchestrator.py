@@ -193,3 +193,54 @@ class TestLoadOrderedTickers:
         result = orchestrator.load_ordered_tickers()
         assert set(result) == set(expected)
         assert len(result) == len(expected)
+
+
+# ---------------------------------------------------------------------------
+# step_options()
+# ---------------------------------------------------------------------------
+
+
+class TestStepOptions:
+    @pytest.fixture()
+    def options_calls(self, tmp_path, monkeypatch):
+        from market_data import fetch_options
+
+        calls: dict = {"results": [], "run": {}}
+        monkeypatch.setattr(orchestrator, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(fetch_options, "get_sp500_symbols", lambda onboarded: ["AAA", "BBB"])
+        monkeypatch.setattr(fetch_options, "get_etf_symbols", lambda onboarded: [])
+        monkeypatch.setattr(orchestrator.metrics, "start_run", lambda name: None)
+        monkeypatch.setattr(orchestrator.metrics, "finish_run", lambda: None)
+        monkeypatch.setattr(
+            orchestrator.metrics,
+            "record_symbol_result",
+            lambda s, success, **kw: calls["results"].append((s, success)),
+        )
+
+        def fake_run(symbols, data_dir, max_expiries):
+            calls["run"] = {"symbols": symbols, "data_dir": data_dir}
+            return calls["rows"]
+
+        monkeypatch.setattr(fetch_options, "run", fake_run)
+        return calls
+
+    def test_success_comes_from_rows_fetched(self, options_calls, tmp_path):
+        options_calls["rows"] = {"AAA": 12, "BBB": 0}
+        orchestrator.step_options({}, {"AAA", "BBB"}, batch_size=10, max_expiries=2)
+
+        assert options_calls["run"]["data_dir"] == tmp_path
+        assert options_calls["results"] == [("AAA", True), ("BBB", False)]
+
+    def test_all_empty_logs_silent_failure(self, options_calls, caplog):
+        options_calls["rows"] = {"AAA": 0, "BBB": 0}
+        orchestrator.step_options({}, {"AAA", "BBB"}, batch_size=10, max_expiries=2)
+
+        assert "OPTIONS silent failure" in caplog.text
+
+    def test_stale_flat_file_does_not_count_as_success(self, options_calls, tmp_path):
+        (tmp_path / "options").mkdir()
+        (tmp_path / "options" / "AAA.parquet").touch()
+        options_calls["rows"] = {"AAA": 0, "BBB": 0}
+        orchestrator.step_options({}, {"AAA", "BBB"}, batch_size=10, max_expiries=2)
+
+        assert ("AAA", False) in options_calls["results"]

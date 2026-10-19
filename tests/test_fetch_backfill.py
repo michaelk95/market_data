@@ -1,6 +1,6 @@
 """
 Tests for fetch_backfill.py:
-  - pending_tickers()  — skipping logic (completed, failures, existing files,
+  - pending_tickers()  — skipping logic (completed, failures, already-stored rows,
                           active tickers, multi-period collapse)
   - run()              — fetch/save orchestration, state persistence, dry-run,
                           empty-data handling
@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
+from market_data.fetch import save_ticker_data
 from market_data.fetch_backfill import pending_tickers, run
 
 # ---------------------------------------------------------------------------
@@ -73,11 +74,19 @@ class TestPendingTickers:
         jobs = pending_tickers(hist, tmp_path, set(), {"DEAD"})
         assert jobs == []
 
-    def test_ticker_with_existing_file_is_skipped(self, tmp_path):
+    def test_ticker_with_stored_rows_is_skipped(self, tmp_path):
         hist = _hist([("DEAD", "2000-01-01", "2010-06-15")])
-        (tmp_path / "DEAD.parquet").touch()
+        save_ticker_data("DEAD", _ohlcv("DEAD"), tmp_path)
         jobs = pending_tickers(hist, tmp_path, set(), set())
         assert jobs == []
+
+    def test_flat_file_alone_does_not_count_as_stored(self, tmp_path):
+        """Leftover data/ohlcv/<SYMBOL>.parquet files are no longer read."""
+        hist = _hist([("DEAD", "2000-01-01", "2010-06-15")])
+        (tmp_path / "ohlcv").mkdir()
+        _ohlcv("DEAD").to_parquet(tmp_path / "ohlcv" / "DEAD.parquet", index=False)
+        jobs = pending_tickers(hist, tmp_path, set(), set())
+        assert [j["ticker"] for j in jobs] == ["DEAD"]
 
     def test_date_range_uses_earliest_start_latest_end(self, tmp_path):
         # Ticker with two membership periods
@@ -140,7 +149,7 @@ class TestRun:
 
         result = run(
             constituent_path=hist_file,
-            ohlcv_dir=tmp_path / "ohlcv",
+            data_dir=tmp_path / "data",
             batch_size=0,
             dry_run=False,
         )
@@ -162,7 +171,7 @@ class TestRun:
 
         result = run(
             constituent_path=hist_file,
-            ohlcv_dir=tmp_path / "ohlcv",
+            data_dir=tmp_path / "data",
             batch_size=1,
             dry_run=False,
         )
@@ -183,7 +192,7 @@ class TestRun:
 
         result = run(
             constituent_path=hist_file,
-            ohlcv_dir=tmp_path / "ohlcv",
+            data_dir=tmp_path / "data",
             batch_size=0,
             dry_run=False,
         )
@@ -203,7 +212,7 @@ class TestRun:
 
         run(
             constituent_path=hist_file,
-            ohlcv_dir=tmp_path / "ohlcv",
+            data_dir=tmp_path / "data",
             batch_size=0,
             dry_run=True,
         )
@@ -233,7 +242,7 @@ class TestRun:
 
         run(
             constituent_path=hist_file,
-            ohlcv_dir=tmp_path / "ohlcv",
+            data_dir=tmp_path / "data",
             batch_size=0,
             dry_run=False,
         )
@@ -247,9 +256,8 @@ class TestRun:
     def test_existing_ohlcv_file_skipped(
         self, mock_state_path, mock_save, mock_fetch, hist_file, tmp_path, state_file
     ):
-        ohlcv_dir = tmp_path / "ohlcv"
-        ohlcv_dir.mkdir()
-        (ohlcv_dir / "DEAD1.parquet").touch()
+        data_dir = tmp_path / "data"
+        save_ticker_data("DEAD1", _ohlcv("DEAD1"), data_dir)
 
         mock_state_path.exists.return_value = False
         mock_state_path.write_text = state_file.write_text
@@ -258,7 +266,7 @@ class TestRun:
 
         result = run(
             constituent_path=hist_file,
-            ohlcv_dir=ohlcv_dir,
+            data_dir=data_dir,
             batch_size=0,
             dry_run=False,
         )

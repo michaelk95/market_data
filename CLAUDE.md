@@ -58,15 +58,15 @@ The main repo already has `.venv/` — no bootstrap needed there.
 The orchestrator is the main entry point (`market-data-run`). It runs in a fixed sequence:
 
 1. **Ticker refresh** — `fetch_tickers.py`: pulls Russell 2000 + S&P 500 constituents from iShares ETF CSV endpoints → `tickers.csv`
-2. **Onboard new tickers** — `fetch.fetch_history()`: fetches 10 years of history per new ticker → `data/ohlcv/<SYMBOL>.parquet`
+2. **Onboard new tickers** — `fetch.fetch_history()`: fetches 10 years of history per new ticker → `data/ohlcv/year=YYYY/data.parquet` (bitemporal, via `storage.write_table`)
 3. **Update existing tickers** — `fetch.fetch_incremental()`: appends rows since `last_run` date
 4. **Fundamentals** (monthly, auto-skips if <30 days since last run) — `fetch_fundamentals.py` → `data/fundamentals/<SYMBOL>.parquet`
-5. **Options** (rolling 50-ticker batch across ~500 SP500 + ETF tickers, ~10-day cycle) — `fetch_options.py` → `data/options/<SYMBOL>.parquet`
-6. **Indices** — `fetch_indices.py` → `data/indices/<SYMBOL>.parquet`
+5. **Options** (rolling 50-ticker batch across ~500 SP500 + ETF tickers, ~10-day cycle) — `fetch_options.py` → `data/options/year=YYYY/data.parquet`
+6. **Indices** — `fetch_indices.py` → `data/indices/data.parquet`
 7. **Macro** — `fetch_macro.py` (FRED API) → `data/macro/<SERIES_ID>.parquet`
-8. **Merge** — `merge.py`: concatenates all `data/ohlcv/*.parquet` → `data/merged.parquet`
+8. **Merge** — `merge.py`: reads the `ohlcv` table (`storage.read_table`) → flat `data/merged.parquet` (`date, symbol, open, high, low, close, volume`)
 
-State (onboarded tickers, last run date, options cycle position) is persisted to `state.json`. All writes are atomic (temp file + rename) and idempotent (deduplication on `(date, symbol)`).
+State (onboarded tickers, last run date, options cycle position) is persisted to `state.json`. All writes are atomic (temp file + rename) and idempotent (deduplication on `(symbol, period_start_date)`; the stored row wins). `flat_tables.py` converts between the collectors' flat frames and the bitemporal schema; leftover flat `data/<table>/<SYMBOL>.parquet` files are no longer read or written.
 
 ### Key modules
 
@@ -80,7 +80,8 @@ State (onboarded tickers, last run date, options cycle position) is persisted to
 | `fetch_options.py` | Rolling daily options chain snapshots; cycle state in `state.json` |
 | `fetch_indices.py` | VIX, Treasury yields, Fed Funds futures |
 | `fetch_macro.py` | FRED API series (DFF, CPI, PCE, unemployment, payrolls, GDP) |
-| `merge.py` | Concatenates per-ticker parquets into `data/merged.parquet` |
+| `flat_tables.py` | Flat collector frame ↔ bitemporal schema conversion (shared with `scripts/migrate_flat_tables.py`) |
+| `merge.py` | Projects the `ohlcv` table to flat `data/merged.parquet` for paper_trading |
 | `metrics.py` | Per-run stats → `logs/metrics.json`, 90-day rolling window |
 | `health.py` | Data freshness checks (OHLCV ≤2d, options ≤14d, fundamentals ≤35d, macro ≤7d) |
 

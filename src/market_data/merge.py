@@ -1,12 +1,16 @@
 """
 merge.py
 --------
-Combines all per-ticker Parquet files in the data/ directory into a single
-merged.parquet file ready for the paper_trading backtest engine.
+Builds data/merged.parquet for the paper_trading backtest engine from the
+bitemporal ``ohlcv`` table (data/ohlcv/year=YYYY/data.parquet).
+
+The output keeps the flat ``date, symbol, open, high, low, close, volume``
+layout paper_trading's MarketData reads; ``date`` is ``period_start_date``.
+Leftover flat ``data/ohlcv/<SYMBOL>.parquet`` files are not read.
 
 Usage
 -----
-    python merge.py                       # reads data/, writes data/merged.parquet
+    python merge.py                       # reads data/ohlcv/, writes data/merged.parquet
     python merge.py --data-dir ./data     # explicit paths
     python merge.py --out ./merged.parquet
 """
@@ -17,40 +21,28 @@ import argparse
 import logging
 from pathlib import Path
 
-import pandas as pd
+from market_data.fetch import OHLCV_COLS
+from market_data.storage import read_table
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = Path("data/ohlcv")
+DEFAULT_DATA_DIR = Path("data")
 DEFAULT_OUT = Path("data") / "merged.parquet"
 
 
 def run(data_dir: Path = DEFAULT_DATA_DIR, out: Path = DEFAULT_OUT) -> None:
-    ticker_files = sorted(
-        p for p in data_dir.glob("*.parquet")
-        if p.name != out.name  # exclude any existing merged file
+    """Write *out* from the ``ohlcv`` table under the data root *data_dir*."""
+    df = read_table(
+        "ohlcv",
+        Path(data_dir),
+        columns=["period_start_date", "symbol", "open", "high", "low", "close", "volume"],
     )
-
-    if not ticker_files:
-        logger.warning("No per-ticker Parquet files found in %s/", data_dir)
-        return
-
-    logger.info("Merging %d ticker file(s)...", len(ticker_files))
-
-    frames = []
-    for path in ticker_files:
-        try:
-            df = pd.read_parquet(path)
-            frames.append(df)
-        except Exception as exc:
-            logger.warning("skipping %s: %s", path.name, exc, exc_info=True)
-
-    if not frames:
-        logger.warning("Nothing to merge.")
+    if df.empty:
+        logger.warning("No rows in the ohlcv table under %s/ — nothing to merge.", data_dir)
         return
 
     merged = (
-        pd.concat(frames, ignore_index=True)
+        df.rename(columns={"period_start_date": "date"})[OHLCV_COLS]
         .drop_duplicates(subset=["date", "symbol"])
         .sort_values(["date", "symbol"])
         .reset_index(drop=True)
@@ -80,13 +72,13 @@ def main() -> None:
     setup_logging()
 
     parser = argparse.ArgumentParser(
-        description="Merge per-ticker Parquet files into one file for the backtest engine."
+        description="Build merged.parquet for the backtest engine from the ohlcv table."
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=DEFAULT_DATA_DIR,
-        help=f"Directory containing per-ticker Parquet files (default: {DEFAULT_DATA_DIR})",
+        help=f"Data root containing the ohlcv/ table (default: {DEFAULT_DATA_DIR})",
     )
     parser.add_argument(
         "--out",
