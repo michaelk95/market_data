@@ -105,7 +105,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.9.1] — 2026-05-10 ([#81](https://github.com/michaelk95/market_data/pull/81))
+## [0.9.1] — 2026-05-10 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
 
 ### Changed
 - Moved one-shot migration scripts (`migrate_fundamentals.py`, `migrate_macro.py`) and `smoke_test.py` out of the `market_data` package into a top-level `scripts/` directory; removed their `pyproject.toml` CLI entry points
