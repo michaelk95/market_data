@@ -10,9 +10,9 @@ All notable changes to this project will be documented here.
 - Agent instructions rewritten. `AGENTS.md` (new) holds the shared
   instructions: the task workflow (research, plan, failing tests, implement,
   test, lint, PR), hard rules (real data, point-in-time correctness,
-  `storage.write_table`, polite caching and rate limiting), conventions and
+  writes only through the existing atomic writers, polite caching and rate limiting), conventions and
   commands. Research goes in `docs/research/`, ADRs in `docs/decisions/`.
-  `CLAUDE.md` now just imports `AGENTS.md`; the stale architecture overview
+  `CLAUDE.md` now just imports `AGENTS.md`; the architecture overview
   and module table are removed.
 
 ---
