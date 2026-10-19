@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market_data"
-version = "0.10.3"
+version = "0.10.4"
 description = "Market data collector for the paper_trading backtest engine."
 requires-python = ">=3.10"
 license = { text = "MIT" }
