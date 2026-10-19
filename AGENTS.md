@@ -21,7 +21,7 @@ One task at a time; don't pick up `backlog.md` items unasked.
 - **Don't touch real data unasked.** `D:\market_data\data`, `state.json` and `tickers.csv` are the only copy. Don't run the pipeline, fetch CLIs, or `scripts/migrate_*`/`repair_*` against them. To experiment, point `MARKET_DATA_CONFIG` at a `config.yaml` copy with temp `paths`.
 - **Never run** `run_and_sleep.bat` (hibernates the PC) or `market-data-agent` (files GitHub issues).
 - **Point-in-time correctness:** `report_date` is when a value became publicly knowable, never earlier. New data types carry the bitemporal fields from `schema.py`.
-- **Use the existing writers:** `fetch.save_ticker_data` / `fetch_options.save_options_snapshot` (flat `<SYMBOL>.parquet` for ohlcv, indices, options) or `storage.write_table` (partitioned macro, fundamentals, analyst estimates). Both are atomic and dedup; never write parquet into `data/` by hand. One-off rewrites back up first.
+- **Use the existing writers:** `fetch.save_ticker_data` / `fetch_options.save_options_snapshot` (flat `<SYMBOL>.parquet` for ohlcv, indices, options) or `storage.write_table` (partitioned macro, fundamentals, analyst estimates). All are atomic and dedup; never write parquet into `data/` by hand. One-off rewrites back up first.
 - **Be polite to data providers:** cache responses and reuse what's already stored; never refetch what you have. Every fetch loop goes through the configured sleeps and `resilience.py` retries.
 - **Per-symbol failures are non-fatal:** log, record, continue.
 - **No live network in tests:** patch yfinance, `requests`, `fredapi`.
