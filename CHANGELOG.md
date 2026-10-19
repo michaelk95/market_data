@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.10.4] — 2026-10-19 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.10.4] — 2026-10-19 ([#80](https://github.com/michaelk95/market_data/pull/80))
 
 ### Changed
 - README storage paths and data formats now match what each collector
@@ -105,7 +105,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.9.1] — 2026-05-10 ([#PR](https://github.com/michaelk95/market_data/pull/PR))
+## [0.9.1] — 2026-05-10 ([#80](https://github.com/michaelk95/market_data/pull/80))
 
 ### Changed
 - Moved one-shot migration scripts (`migrate_fundamentals.py`, `migrate_macro.py`) and `smoke_test.py` out of the `market_data` package into a top-level `scripts/` directory; removed their `pyproject.toml` CLI entry points
