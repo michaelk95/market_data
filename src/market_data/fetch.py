@@ -9,9 +9,12 @@ fetch_history(symbol, years)        Full historical pull (default 10 years).
 fetch_max_history(symbol)           Full available history via period="max".
 fetch_incremental(symbol, since)    Pull data from a given date onward.
 fetch_date_range(symbol, start, end) Bounded historical pull for a date range.
-save_ticker_data(symbol, df, dir)   Append new rows to per-ticker Parquet,
-                                    deduplicating on (date, symbol).
-load_ticker_data(symbol, dir)       Load a per-ticker Parquet (or None).
+save_ticker_data(symbol, df, root)  Merge flat OHLCV rows into the bitemporal
+                                    ``ohlcv`` (or ``indices``) table under the
+                                    data root, deduplicating on
+                                    (symbol, period_start_date).
+load_ticker_data(symbol, root)      Load one symbol's rows back in the flat
+                                    OHLCV layout (or None).
 """
 
 from __future__ import annotations
@@ -23,14 +26,16 @@ import pandas as pd
 import yfinance as yf
 
 from market_data.config import cfg as _cfg
+from market_data.flat_tables import OHLCV_FLAT_COLS, from_flat, to_flat
 from market_data.resilience import yf_retry
+from market_data.storage import read_table, write_table
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 DEFAULT_HISTORY_YEARS: int = _cfg.get("collection.history_years", 10)
-OHLCV_COLS = ["date", "symbol", "open", "high", "low", "close", "volume"]
+OHLCV_COLS = OHLCV_FLAT_COLS
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +81,18 @@ def _normalize(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def _ticker_path(symbol: str, data_dir: Path) -> Path:
-    return data_dir / f"{symbol}.parquet"
+def _check_data_root(data_dir: Path, table: str) -> Path:
+    """Reject a table directory passed where the data root is expected.
+
+    Before the bitemporal migration callers passed ``data/ohlcv``; writing the
+    table under it would silently create ``data/ohlcv/ohlcv/``.
+    """
+    data_dir = Path(data_dir)
+    if data_dir.name == table:
+        raise ValueError(
+            f"data_dir must be the data root (containing '{table}/'), got {data_dir}"
+        )
+    return data_dir
 
 
 # ---------------------------------------------------------------------------
@@ -155,51 +170,39 @@ def fetch_date_range(
     return _normalize(raw, symbol)
 
 
-def load_ticker_data(symbol: str, data_dir: Path) -> pd.DataFrame | None:
+def load_ticker_data(
+    symbol: str, data_dir: Path, table: str = "ohlcv"
+) -> pd.DataFrame | None:
     """
-    Load the existing Parquet for `symbol`, or return None if it doesn't exist.
+    Load `symbol`'s rows from *table* under the data root *data_dir*.
+
+    Returns the flat OHLCV layout (``OHLCV_COLS``) sorted by date, or None if
+    the table holds no rows for `symbol`.
     """
-    path = _ticker_path(symbol, data_dir)
-    if not path.exists():
+    data_dir = _check_data_root(data_dir, table)
+    df = read_table(table, data_dir, symbols=[symbol])
+    if df.empty:
         return None
-    return pd.read_parquet(path)
+    return to_flat(df.sort_values("period_start_date"), table)
 
 
-def save_ticker_data(symbol: str, new_df: pd.DataFrame, data_dir: Path) -> int:
+def save_ticker_data(
+    symbol: str, new_df: pd.DataFrame, data_dir: Path, table: str = "ohlcv"
+) -> int:
     """
-    Merge `new_df` into the existing per-ticker Parquet file.
+    Merge flat OHLCV rows into the bitemporal *table* under the data root.
 
-    Deduplicates on (date, symbol), sorts by date ascending, and overwrites
-    the file atomically (write to temp then rename).
+    *new_df* uses the flat ``OHLCV_COLS`` layout; it is converted with
+    ``flat_tables.from_flat`` (``collected_at`` = now) and written with
+    ``storage.write_table``, which deduplicates on (symbol, period_start_date)
+    keeping the stored row, and writes each partition atomically.
+
+    `symbol` is used for logging context only; the rows carry their own symbol.
 
     Returns the number of net-new rows added.
     """
+    data_dir = _check_data_root(data_dir, table)
     if new_df.empty:
         return 0
-
-    data_dir.mkdir(parents=True, exist_ok=True)
-    path = _ticker_path(symbol, data_dir)
-
-    if path.exists():
-        existing = pd.read_parquet(path)
-        combined = pd.concat([existing, new_df], ignore_index=True)
-    else:
-        combined = new_df.copy()
-
-    before = len(pd.read_parquet(path)) if path.exists() else 0
-
-    combined["date"] = pd.to_datetime(combined["date"]).dt.date
-    combined = (
-        combined
-        .drop_duplicates(subset=["date", "symbol"])
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
-
-    # Atomic write: write to a temp file first, then rename
-    tmp_path = path.with_suffix(".tmp.parquet")
-    combined.to_parquet(tmp_path, index=False)
-    tmp_path.replace(path)
-
-    after = len(combined)
-    return after - before
+    collected_at = pd.Timestamp.now(tz="UTC").floor("us")
+    return write_table(from_flat(new_df, table, collected_at), table, data_dir)

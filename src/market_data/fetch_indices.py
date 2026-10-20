@@ -12,8 +12,9 @@ Covers:
   ZQ=F   — 30-day Fed Funds Futures (front month)
   ^GSPC  — S&P 500 index level
 
-Data is stored under data/indices/<SYMBOL>.parquet using the same schema
-and atomic-write pattern as the equity OHLCV pipeline.
+Data is stored in the bitemporal ``indices`` table (one unpartitioned
+data/indices/data.parquet) via the same ``save_ticker_data`` writer as the
+equity OHLCV pipeline.
 
 Usage
 -----
@@ -57,7 +58,8 @@ INDEX_SYMBOLS: list[str] = _cfg.get(
     ],
 )
 
-INDICES_DIR = Path(_cfg.get("paths.indices_dir", "data/indices"))
+# Data root containing the indices/ table.
+DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.indices", 3)
 
 
@@ -69,12 +71,12 @@ def update_symbol(symbol: str, history_years: int) -> int:
     """
     Bootstrap or incrementally update a single index/rate symbol.
 
-    If no local file exists yet, pulls `history_years` of history.
+    If the indices table has no rows for the symbol yet, pulls `history_years` of history.
     Otherwise pulls data since the last stored date.
 
     Returns the number of new rows added.
     """
-    existing = load_ticker_data(symbol, INDICES_DIR)
+    existing = load_ticker_data(symbol, DATA_DIR, table="indices")
 
     if existing is None:
         df = fetch_history(symbol, years=history_years)
@@ -88,7 +90,7 @@ def update_symbol(symbol: str, history_years: int) -> int:
         logger.info("%s  no data  (%s)", symbol, action)
         return 0
 
-    added = save_ticker_data(symbol, df, INDICES_DIR)
+    added = save_ticker_data(symbol, df, DATA_DIR, table="indices")
     logger.info("%s  +%d rows  (%s)", symbol, added, action)
     return added
 

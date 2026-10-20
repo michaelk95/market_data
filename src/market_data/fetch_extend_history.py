@@ -5,7 +5,7 @@ Extends OHLCV history for all onboarded active tickers back to the maximum
 available depth (targeting 1990) using yfinance period="max".
 
 For each onboarded ticker whose existing data starts after EARLIEST_TARGET,
-fetches the full available history and merges it into the existing parquet.
+fetches the full available history and merges it into the ohlcv table.
 Deduplication is handled by save_ticker_data, so re-runs are safe.
 
 Tickers whose earliest date is already at or before EARLIEST_TARGET are
@@ -34,15 +34,15 @@ import time
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
-
 from market_data.config import cfg as _cfg
 from market_data.fetch import fetch_max_history, save_ticker_data
+from market_data.storage import read_table
 
 logger = logging.getLogger(__name__)
 
 STATE_FILE = Path(_cfg.get("paths.state_file", "state.json"))
-OHLCV_DIR = Path(_cfg.get("paths.ohlcv_dir", "data/ohlcv"))
+# Data root containing the ohlcv/ table.
+DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 
 EARLIEST_TARGET: date = date(1990, 1, 1)
 DEFAULT_BATCH_SIZE: int = _cfg.get("collection.extend_history_batch_size", 50)
@@ -74,20 +74,17 @@ def _save_state(state: dict) -> None:
 # Pending-ticker logic
 # ---------------------------------------------------------------------------
 
-def _earliest_date(ticker: str, ohlcv_dir: Path) -> date | None:
-    """Return the earliest date in an existing OHLCV parquet, or None if missing."""
-    path = ohlcv_dir / f"{ticker}.parquet"
-    if not path.exists():
-        return None
-    df = pd.read_parquet(path, columns=["date"])
+def _earliest_dates(data_dir: Path) -> dict[str, date]:
+    """Return each stored symbol's earliest ``period_start_date`` in the ohlcv table."""
+    df = read_table("ohlcv", data_dir, columns=["symbol", "period_start_date"])
     if df.empty:
-        return None
-    return pd.to_datetime(df["date"]).min().date()
+        return {}
+    return df.groupby("symbol")["period_start_date"].min().to_dict()
 
 
 def pending_tickers(
     onboarded: set[str],
-    ohlcv_dir: Path,
+    data_dir: Path,
     completed: set[str],
     failures: set[str],
     earliest_target: date = EARLIEST_TARGET,
@@ -103,13 +100,14 @@ def pending_tickers(
     """
     needs_fetch: list[str] = []
     already_deep: list[str] = []
+    earliest_by_symbol = _earliest_dates(data_dir)
 
     for ticker in sorted(onboarded):
         if ticker in completed or ticker in failures:
             continue
-        earliest = _earliest_date(ticker, ohlcv_dir)
+        earliest = earliest_by_symbol.get(ticker)
         if earliest is None:
-            continue  # No file yet; not our job (orchestrator handles onboarding)
+            continue  # No rows yet; not our job (orchestrator handles onboarding)
         if earliest <= earliest_target:
             already_deep.append(ticker)
         else:
@@ -123,7 +121,7 @@ def pending_tickers(
 # ---------------------------------------------------------------------------
 
 def run(
-    ohlcv_dir: Path = OHLCV_DIR,
+    data_dir: Path = DATA_DIR,
     batch_size: int = DEFAULT_BATCH_SIZE,
     dry_run: bool = False,
     earliest_target: date = EARLIEST_TARGET,
@@ -132,8 +130,8 @@ def run(
 
     Parameters
     ----------
-    ohlcv_dir:
-        Directory where per-ticker OHLCV parquets are stored.
+    data_dir:
+        Data root containing the bitemporal ``ohlcv/`` table.
     batch_size:
         Maximum number of tickers to fetch in a single run (0 = no limit).
     dry_run:
@@ -155,7 +153,7 @@ def run(
         return {"fetched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     needs_fetch, already_deep = pending_tickers(
-        onboarded, ohlcv_dir, completed, failures, earliest_target
+        onboarded, data_dir, completed, failures, earliest_target
     )
 
     # Mark tickers that already have deep history as complete (no fetch needed)
@@ -228,7 +226,7 @@ def run(
             _save_state(state)
             continue
 
-        new_rows = save_ticker_data(ticker, df, ohlcv_dir)
+        new_rows = save_ticker_data(ticker, df, data_dir)
         earliest = df["date"].min()
         logger.info(
             "    OK   %s: %d rows (%d new, earliest=%s)",

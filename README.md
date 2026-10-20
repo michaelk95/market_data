@@ -6,21 +6,19 @@ Collects and stores six categories of data:
 
 | Category | Source | Cadence | Storage |
 |----------|--------|---------|---------|
-| Equity OHLCV (SP500 + Russell 2000) | yfinance | Daily | `data/ohlcv/<SYMBOL>.parquet` |
-| Market indices & rates (VIX, Treasury yields, Fed Funds futures) | yfinance | Daily | `data/indices/<SYMBOL>.parquet` |
+| Equity OHLCV (SP500 + Russell 2000) | yfinance | Daily | `data/ohlcv/year=YYYY/data.parquet` |
+| Market indices & rates (VIX, Treasury yields, Fed Funds futures) | yfinance | Daily | `data/indices/data.parquet` |
 | Macro series (CPI, GDP, unemployment, etc.) | FRED API | Daily/Monthly/Quarterly | `data/macro/data.parquet` |
 | Per-ticker fundamentals (market cap, P/E, EPS, etc.) | yfinance | Monthly | `data/fundamentals/year=YYYY/data.parquet` |
 | Analyst estimates (price targets, recommendation) | yfinance | Daily | `data/analyst_estimates/year=YYYY/data.parquet` |
-| Options chains / IV (SP500 + sector/broad ETFs) | yfinance | Daily (batched ~10-day cycle) | `data/options/<SYMBOL>.parquet` |
+| Options chains / IV (SP500 + sector/broad ETFs) | yfinance | Daily (batched ~10-day cycle) | `data/options/year=YYYY/data.parquet` |
 
-There are two storage layouts. Macro, fundamentals and analyst estimates are
-written by `storage.write_table` in the bitemporal layout from `schema.py`:
-large tables are split into `year=YYYY/data.parquet` partitions, and small
-ones go in a single `data.parquet`. The OHLCV, indices and options collectors
-still write one flat Parquet file per symbol. `storage.read_table` and
-`scripts/migrate_flat_tables.py` already use the bitemporal layout for those
-three tables too, but the copies the migration creates are a one-off snapshot
-that the collectors don't update yet. Read the flat files for current data.
+Every table is written by `storage.write_table` in the bitemporal layout from
+`schema.py`: large tables are split into `year=YYYY/data.parquet` partitions,
+and small ones go in a single `data.parquet`. Read them with
+`storage.read_table`. Older flat `data/<table>/<SYMBOL>.parquet` files from
+before 0.11.0 are no longer read; `scripts/migrate_flat_tables.py` copies them
+into the tables.
 
 ---
 
@@ -33,7 +31,7 @@ virtual environment:
 |---------|-------------|
 | `market-data-fetch-tickers` | Download the current Russell 2000 + SP500 constituent list and save to `tickers.csv` |
 | `market-data-run` | Run the daily pipeline — onboard new tickers, update existing ones, and optionally run all data types |
-| `market-data-merge` | Merge the per-ticker files in `data/ohlcv/` into a single `data/merged.parquet` |
+| `market-data-merge` | Build `data/merged.parquet` (flat OHLCV for the backtest engine) from the `ohlcv` table |
 | `market-data-fetch-indices` | Update market index and rate symbols (VIX, Treasury yields, Fed Funds futures) |
 | `market-data-fetch-macro` | Update FRED macro series (CPI, GDP, Fed Funds rate, Treasury spread, etc.) |
 | `market-data-fetch-fundamentals` | Snapshot per-ticker fundamentals for all onboarded tickers (market cap, P/E, EPS, etc.) |
@@ -148,8 +146,8 @@ market-data-backfill-constituents --dry-run
 
 **What this does:** `constituent_history.parquet` records every ticker's
 S&P 500 membership span (`date_added` → `date_removed`). For each delisted
-ticker with no existing OHLCV file, the backfill fetches that exact date range
-from yfinance and saves it to `data/ohlcv/` using the same schema as the
+ticker with no rows in the `ohlcv` table, the backfill fetches that exact date range
+from yfinance and writes it to the `ohlcv` table the same way as the
 regular pipeline. Progress (completed and failed tickers) is written to
 `state.json` after each ticker so the run is safely resumable.
 
@@ -159,7 +157,7 @@ bankruptcy-reorganised tickers. Those are recorded in `state.json` under
 
 ### 7. Merge into a single file
 
-Merge the per-ticker files in `data/ohlcv/` into a single Parquet for the backtest engine:
+Build a single flat Parquet for the backtest engine from the `ohlcv` table:
 
 ```bash
 market-data-merge
@@ -196,20 +194,21 @@ automatically.
 
 ## Data formats
 
-### Equity OHLCV — `data/ohlcv/<SYMBOL>.parquet`
+### Equity OHLCV — `data/ohlcv/year=YYYY/data.parquet`
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `date` | date | Trading day |
 | `symbol` | str | Ticker symbol |
 | `open` | float | |
 | `high` | float | |
 | `low` | float | |
 | `close` | float | Adjusted close |
 | `volume` | float | |
+| *bitemporal columns* | | `period_start_date` is the trading day; `report_time_marker` is `post-market` |
 
-`data/merged.parquet` concatenates all the per-ticker files (same columns), used as the
-input to the `paper_trading` backtest engine:
+`data/merged.parquet` flattens the table to `date, symbol, open, high, low,
+close, volume` (`date` is `period_start_date`), used as the input to the
+`paper_trading` backtest engine:
 
 ```python
 from paper_trading import MarketData, BacktestEngine
@@ -218,9 +217,9 @@ md = MarketData.from_parquet("../market_data/data/merged.parquet")
 engine = BacktestEngine(market_data=md, initial_cash=100_000)
 ```
 
-### Indices & rates — `data/indices/<SYMBOL>.parquet`
+### Indices & rates — `data/indices/data.parquet`
 
-Same schema as equity OHLCV. Symbols collected:
+Same schema as equity OHLCV, in one unpartitioned file. Symbols collected:
 
 | Symbol | Description |
 |--------|-------------|
@@ -234,8 +233,8 @@ Same schema as equity OHLCV. Symbols collected:
 
 ### Bitemporal columns
 
-Every table written by `storage.write_table` (macro, fundamentals, analyst
-estimates) has these columns in addition to its data columns:
+Every table written by `storage.write_table` has these columns in addition to
+its data columns:
 
 | Column | Description |
 |--------|-------------|
@@ -278,13 +277,12 @@ Series collected by default:
 | `GDPC1` | Real GDP (chained 2017 dollars) | Quarterly |
 | `GDP` | Nominal GDP | Quarterly |
 
-### Options chains — `data/options/<SYMBOL>.parquet`
+### Options chains — `data/options/year=YYYY/data.parquet`
 
-Daily snapshots for SP500 tickers and ETFs. Each row is one option contract observed on `snapshot_date`.
+Daily snapshots for SP500 tickers and ETFs. Each row is one option contract observed on the snapshot date.
 
 | Column | Description |
 |--------|-------------|
-| `snapshot_date` | Date the snapshot was taken |
 | `symbol` | Underlying ticker |
 | `expiry` | Option expiration date |
 | `strike` | Strike price |
@@ -296,6 +294,7 @@ Daily snapshots for SP500 tickers and ETFs. Each row is one option contract obse
 | `open_interest` | Total open contracts |
 | `implied_vol` | Implied volatility (annualised decimal, e.g. 0.25 = 25%) |
 | `in_the_money` | `True` if the contract is currently ITM |
+| *bitemporal columns* | `period_start_date` is the snapshot date; `report_time_marker` is `pre-market` |
 
 Covers the nearest 4 expiration dates per ticker. Data source is yfinance
 (unofficial scraper) — suitable for research and forecasting, not production trading.

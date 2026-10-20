@@ -39,6 +39,14 @@ covered the cycle resets automatically.
 
 Cycle state is tracked in state.json under the key "options_cycle".
 
+Storage
+-------
+Snapshots are written to the bitemporal ``options`` table
+(data/options/year=YYYY/data.parquet); ``snapshot_date`` becomes
+``period_start_date`` with a ``pre-market`` report_time_marker.  Each run
+buffers every symbol's chain and writes once, so the year partition is
+rewritten once per run rather than once per symbol.
+
 Usage
 -----
     market-data-fetch-options                          # next batch (default 50)
@@ -60,7 +68,9 @@ import pandas as pd
 import yfinance as yf
 
 from market_data.config import cfg as _cfg
+from market_data.flat_tables import OPTIONS_FLAT_COLS, from_flat
 from market_data.resilience import yf_retry
+from market_data.storage import write_table
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +78,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-OPTIONS_DIR = Path(_cfg.get("paths.options_dir", "data/options"))
+DATA_DIR = Path(_cfg.get("paths.data_dir", "data"))
 STATE_FILE = Path(_cfg.get("paths.state_file", "state.json"))
 TICKERS_FILE = Path(_cfg.get("paths.tickers_file", "tickers.csv"))
 
@@ -76,20 +86,7 @@ DEFAULT_BATCH_SIZE: int = _cfg.get("collection.options_batch_size", 50)
 DEFAULT_MAX_EXPIRIES: int = _cfg.get("collection.options_max_expiries", 4)
 SLEEP_BETWEEN_CALLS: int = _cfg.get("sources.sleep_between_calls.options", 5)
 
-OPTIONS_COLS = [
-    "snapshot_date",
-    "symbol",
-    "expiry",
-    "strike",
-    "option_type",
-    "last_price",
-    "bid",
-    "ask",
-    "volume",
-    "open_interest",
-    "implied_vol",
-    "in_the_money",
-]
+OPTIONS_COLS = OPTIONS_FLAT_COLS
 
 
 # ---------------------------------------------------------------------------
@@ -205,52 +202,26 @@ def fetch_option_chain(symbol: str, max_expiries: int) -> pd.DataFrame:
 # Storage
 # ---------------------------------------------------------------------------
 
-def _options_path(symbol: str, options_dir: Path) -> Path:
-    return options_dir / f"{symbol}.parquet"
-
-
-def save_options_snapshot(
-    symbol: str,
-    new_df: pd.DataFrame,
-    options_dir: Path,
-) -> int:
+def save_options_snapshot(new_df: pd.DataFrame, data_dir: Path = DATA_DIR) -> int:
     """
-    Append new_df to the per-ticker options Parquet.
+    Merge flat option-chain rows (``OPTIONS_COLS``) into the ``options`` table.
 
-    Deduplicates on (snapshot_date, symbol, expiry, strike, option_type) so
-    re-running on the same day is safe.  Writes atomically.
+    *data_dir* is the data root (containing ``options/``).  ``write_table``
+    deduplicates on (symbol, period_start_date, expiry, strike, option_type)
+    keeping the stored row, so re-running on the same day is safe.  Writes
+    each partition atomically.
 
     Returns the number of net-new rows added.
     """
+    data_dir = Path(data_dir)
+    if data_dir.name == "options":
+        raise ValueError(
+            f"data_dir must be the data root (containing 'options/'), got {data_dir}"
+        )
     if new_df.empty:
         return 0
-
-    options_dir.mkdir(parents=True, exist_ok=True)
-    path = _options_path(symbol, options_dir)
-
-    if path.exists():
-        existing = pd.read_parquet(path)
-        combined = pd.concat([existing, new_df], ignore_index=True)
-        before = len(existing)
-    else:
-        combined = new_df.copy()
-        before = 0
-
-    dedup_keys = ["snapshot_date", "symbol", "expiry", "strike", "option_type"]
-    combined["snapshot_date"] = pd.to_datetime(combined["snapshot_date"]).dt.date
-    combined["expiry"] = pd.to_datetime(combined["expiry"]).dt.date
-    combined = (
-        combined
-        .drop_duplicates(subset=dedup_keys)
-        .sort_values(["snapshot_date", "expiry", "strike", "option_type"])
-        .reset_index(drop=True)
-    )
-
-    tmp_path = path.with_suffix(".tmp.parquet")
-    combined.to_parquet(tmp_path, index=False)
-    tmp_path.replace(path)
-
-    return len(combined) - before
+    collected_at = pd.Timestamp.now(tz="UTC").floor("us")
+    return write_table(from_flat(new_df, "options", collected_at), "options", data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -259,11 +230,19 @@ def save_options_snapshot(
 
 def run(
     symbols: list[str],
-    options_dir: Path = OPTIONS_DIR,
+    data_dir: Path = DATA_DIR,
     max_expiries: int = DEFAULT_MAX_EXPIRIES,
-) -> None:
+) -> dict[str, int]:
     """
-    Fetch and store option chain snapshots for each symbol in `symbols`.
+    Fetch option chain snapshots for each symbol in `symbols` and store them.
+
+    All chains are buffered and written with a single ``save_options_snapshot``
+    call at the end of the run.
+
+    Returns
+    -------
+    dict[str, int]
+        Contract rows fetched per symbol (0 for no data or an error).
     """
     today = date.today()
     total = len(symbols)
@@ -271,22 +250,25 @@ def run(
     logger.info("market_data options  —  %s", today)
     logger.info("Tickers: %d  max_expiries: %d", total, max_expiries)
 
-    saved_rows = 0
+    fetched: dict[str, int] = {}
+    frames: list[pd.DataFrame] = []
     skipped = 0
     failed = 0
 
     for i, symbol in enumerate(symbols, 1):
         prefix = f"[{i:>3}/{total}] {symbol:<8}"
+        fetched[symbol] = 0
         try:
             df = fetch_option_chain(symbol, max_expiries=max_expiries)
             if df.empty:
                 logger.info("%s  no data", prefix)
                 skipped += 1
             else:
-                added = save_options_snapshot(symbol, df, options_dir)
-                expiry_count = df["expiry"].nunique()
-                logger.info("%s  +%d rows  (%d expiries)", prefix, added, expiry_count)
-                saved_rows += added
+                frames.append(df)
+                fetched[symbol] = len(df)
+                logger.info(
+                    "%s  %d rows  (%d expiries)", prefix, len(df), df["expiry"].nunique()
+                )
         except Exception:
             logger.exception("%s  ERROR", prefix)
             failed += 1
@@ -294,9 +276,14 @@ def run(
         if i < total:
             time.sleep(SLEEP_BETWEEN_CALLS)
 
+    saved_rows = 0
+    if frames:
+        saved_rows = save_options_snapshot(pd.concat(frames, ignore_index=True), data_dir)
+
     logger.info(
         "options done: rows_saved=%d  skipped=%d  failed=%d", saved_rows, skipped, failed
     )
+    return fetched
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from market_data.fetch import save_ticker_data
 from market_data.schema import TABLE_SCHEMAS
 from market_data.storage import read_table
 
@@ -198,6 +199,23 @@ class TestMigrateOhlcv:
 
         assert added == 1
         assert len(read_table("ohlcv", flat_data, symbols=["AAPL"])) == 5
+
+    def test_resync_after_live_writes_adds_only_flat_only_rows(self, flat_data: Path) -> None:
+        """Cutover re-sync: rows the new writer already stored are not duplicated."""
+        migrate_flat_tables.run("ohlcv", flat_data)
+        jan4, jan5 = datetime.date(2024, 1, 4), datetime.date(2024, 1, 5)
+        live = _flat_ohlcv("AAPL", [jan4], start=104.0).assign(volume=1_000_004.0)
+        assert save_ticker_data("AAPL", live, flat_data) == 1
+        # The old collector also wrote jan4, plus jan5 the new writer never saw.
+        _write_flat(
+            flat_data / "ohlcv" / "AAPL.parquet",
+            _flat_ohlcv("AAPL", [*_DATES_2023_2024, jan4, jan5]),
+        )
+
+        assert migrate_flat_tables.run("ohlcv", flat_data) == 1
+        stored = read_table("ohlcv", flat_data, symbols=["AAPL"])
+        assert sorted(stored["period_start_date"])[-2:] == [jan4, jan5]
+        assert migrate_flat_tables.run("ohlcv", flat_data) == 0
 
     def test_dry_run_writes_nothing(self, flat_data: Path) -> None:
         count = migrate_flat_tables.run("ohlcv", flat_data, dry_run=True)
