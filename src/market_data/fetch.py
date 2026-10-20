@@ -15,6 +15,10 @@ save_ticker_data(symbol, df, root)  Merge flat OHLCV rows into the bitemporal
                                     (symbol, period_start_date).
 load_ticker_data(symbol, root)      Load one symbol's rows back in the flat
                                     OHLCV layout (or None).
+TickerBatchWriter(root)             Buffer many symbols' rows and write them
+                                    with one ``write_table`` call per batch, so
+                                    each year partition is rewritten once per
+                                    batch instead of once per symbol.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ import yfinance as yf
 from market_data.config import cfg as _cfg
 from market_data.flat_tables import OHLCV_FLAT_COLS, from_flat, to_flat
 from market_data.resilience import yf_retry
-from market_data.storage import read_table, write_table
+from market_data.storage import read_table, write_table, write_table_counts
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -36,6 +40,8 @@ from market_data.storage import read_table, write_table
 
 DEFAULT_HISTORY_YEARS: int = _cfg.get("collection.history_years", 10)
 OHLCV_COLS = OHLCV_FLAT_COLS
+# Symbols buffered by TickerBatchWriter before each storage write.
+DEFAULT_WRITE_BATCH_SYMBOLS: int = _cfg.get("collection.write_batch_symbols", 100)
 
 
 # ---------------------------------------------------------------------------
@@ -206,3 +212,79 @@ def save_ticker_data(
         return 0
     collected_at = pd.Timestamp.now(tz="UTC").floor("us")
     return write_table(from_flat(new_df, table, collected_at), table, data_dir)
+
+
+class BatchWriteError(Exception):
+    """A ``TickerBatchWriter`` flush failed; no row of *symbols* was written."""
+
+    def __init__(self, symbols: list[str], cause: Exception) -> None:
+        super().__init__(f"write of {len(symbols)} symbol(s) failed: {cause}")
+        self.symbols = symbols
+
+
+class TickerBatchWriter:
+    """
+    Buffer flat OHLCV rows for many symbols and write them in one call.
+
+    ``save_ticker_data`` rewrites every year partition a symbol touches, so
+    saving symbols one by one rewrites the same partitions once per symbol.
+    This writer conforms each symbol's rows on ``add`` (so a malformed frame
+    fails for that symbol alone) and writes the whole buffer with a single
+    ``storage.write_table_counts`` call on ``flush``.
+
+    The caller decides when to flush (``full`` turns true at *max_symbols*)
+    and must flush once more at the end.  Only mark symbols done after the
+    flush that wrote them succeeds.
+    """
+
+    def __init__(
+        self,
+        data_dir: Path,
+        table: str = "ohlcv",
+        max_symbols: int | None = None,
+    ) -> None:
+        self.data_dir = _check_data_root(data_dir, table)
+        self.table = table
+        self.max_symbols = max_symbols or DEFAULT_WRITE_BATCH_SYMBOLS
+        self._symbols: list[str] = []
+        self._frames: list[pd.DataFrame] = []
+
+    @property
+    def symbols(self) -> list[str]:
+        """Symbols buffered since the last flush, in the order added."""
+        return list(self._symbols)
+
+    @property
+    def full(self) -> bool:
+        """True once *max_symbols* symbols are buffered."""
+        return len(self._symbols) >= self.max_symbols
+
+    def add(self, symbol: str, new_df: pd.DataFrame) -> None:
+        """Conform *new_df* (flat ``OHLCV_COLS``) and buffer it under *symbol*.
+
+        Raises (and buffers nothing) if the rows cannot be conformed.
+        """
+        if not new_df.empty:
+            collected_at = pd.Timestamp.now(tz="UTC").floor("us")
+            self._frames.append(from_flat(new_df, self.table, collected_at))
+        self._symbols.append(symbol)
+
+    def flush(self) -> dict[str, int]:
+        """Write the buffer; return net-new rows for each buffered symbol.
+
+        The buffer is cleared whether or not the write succeeds.  A failed
+        write raises ``BatchWriteError`` naming every buffered symbol.
+        """
+        symbols, frames = self._symbols, self._frames
+        self._symbols, self._frames = [], []
+        if not symbols:
+            return {}
+        counts: dict[str, int] = {}
+        if frames:
+            try:
+                counts = write_table_counts(
+                    pd.concat(frames, ignore_index=True), self.table, self.data_dir
+                )
+            except Exception as exc:
+                raise BatchWriteError(symbols, exc) from exc
+        return {symbol: counts.get(symbol, 0) for symbol in symbols}
