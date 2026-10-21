@@ -6,7 +6,12 @@ import pandas as pd
 import pytest
 
 from market_data.schema import DataSource, ReportTimeMarker
-from market_data.storage import read_table, write_table, write_table_counts
+from market_data.storage import (
+    read_table,
+    replace_rows,
+    write_table,
+    write_table_counts,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -213,6 +218,32 @@ class TestWriteTableCounts:
 
     def test_empty_frame_returns_empty_dict(self, tmp_path):
         assert write_table_counts(pd.DataFrame(), "ohlcv", tmp_path) == {}
+
+
+class TestReplaceRows:
+    def test_incoming_rows_win(self, tmp_path):
+        write_table(pd.DataFrame([
+            _ohlcv_row("AAPL", datetime.date(2023, 12, 29), 200.0),
+            _ohlcv_row("AAPL", datetime.date(2024, 1, 2), 200.0),
+            _ohlcv_row("MSFT", datetime.date(2024, 1, 2), 300.0),
+        ]), "ohlcv", tmp_path)
+        df = pd.DataFrame([
+            _ohlcv_row("AAPL", datetime.date(2023, 12, 29), 100.0),
+            _ohlcv_row("AAPL", datetime.date(2024, 1, 2), 100.0),
+        ])
+
+        assert replace_rows(df, "ohlcv", tmp_path) == 2
+
+        stored = read_table("ohlcv", tmp_path)
+        assert len(stored) == 3
+        assert stored.loc[stored["symbol"] == "AAPL", "close"].tolist() == [100.0, 100.0]
+        assert stored.loc[stored["symbol"] == "MSFT", "close"].item() == 300.0
+
+    def test_write_table_still_keeps_stored_rows(self, tmp_path):
+        row = _ohlcv_row("AAPL", datetime.date(2024, 1, 2), 100.0)
+        replace_rows(pd.DataFrame([row]), "ohlcv", tmp_path)
+        write_table(pd.DataFrame([{**row, "close": 1.0}]), "ohlcv", tmp_path)
+        assert read_table("ohlcv", tmp_path)["close"].item() == 100.0
 
 
 # ---------------------------------------------------------------------------

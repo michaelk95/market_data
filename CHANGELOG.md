@@ -4,6 +4,31 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.14.0] — 2026-10-21
+
+### Fixed
+- OHLCV history is re-downloaded after a stock split. Bars were stored
+  split-adjusted as of their download and later runs only appended, so a
+  split left older bars on the old basis and `merged.parquet` showed fake
+  crashes (BKNG −96% on 2026-04-06, CRWD −75%). The nightly update now
+  reads `Stock Splits` from the same yfinance request, queues each split
+  symbol in `state.json` (`split_refetch_pending`), re-downloads its stored
+  date range and replaces those rows in one write. A re-download that
+  covers too few stored dates, or breaks against the stored closes too
+  often (a different security under the ticker), is rejected and logged.
+  ADR 0002, research in `docs/research/split-adjustment.md`.
+
+### Added
+- `storage.replace_rows`: like `write_table`, but incoming rows win.
+- `scripts/repair_split_adjustment.py` for splits already in the store or
+  missed by the nightly run. Dry run by default; `--apply` backs up the
+  touched partitions first. Downloads are cached under
+  `logs/split_repair_cache`.
+- `splits:` section in `config.yaml` (gate thresholds, pending days,
+  candidate factors).
+
+---
+
 ## [0.13.1] — 2026-10-20 ([#89](https://github.com/michaelk95/market_data/pull/89))
 
 ### Added

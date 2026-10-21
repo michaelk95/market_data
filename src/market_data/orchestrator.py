@@ -54,14 +54,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from market_data import metrics, resilience
+from market_data import metrics, resilience, splits
 from market_data.config import cfg as _cfg
 from market_data.fetch import (
     DEFAULT_HISTORY_YEARS,
     BatchWriteError,
     TickerBatchWriter,
     fetch_history,
-    fetch_incremental,
+    fetch_incremental_with_splits,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +81,8 @@ TICKER_REFRESH_DAYS: int = _cfg.get("collection.ticker_refresh_days", 90)
 FUNDAMENTALS_REFRESH_DAYS: int = _cfg.get("collection.fundamentals_refresh_days", 30)
 DEFAULT_OPTIONS_BATCH_SIZE: int = _cfg.get("collection.options_batch_size", 50)
 DEFAULT_MAX_EXPIRIES: int = _cfg.get("collection.options_max_expiries", 4)
+# Days a split stays queued for re-download before it is left to the repair script.
+SPLIT_MAX_PENDING_DAYS: int = _cfg.get("splits.max_pending_days", 10)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +99,7 @@ def load_state() -> dict:
             "last_fundamentals_run": raw.get("last_fundamentals_run"),
             "options_cycle": raw.get("options_cycle", []),
             "fetch_failures": raw.get("fetch_failures", {}),
+            "split_refetch_pending": raw.get("split_refetch_pending", {}),
         }
     return {
         "onboarded": [],
@@ -105,6 +108,7 @@ def load_state() -> dict:
         "last_fundamentals_run": None,
         "options_cycle": [],
         "fetch_failures": {},
+        "split_refetch_pending": {},
     }
 
 
@@ -448,7 +452,9 @@ def step_update(
     for i, symbol in enumerate(to_update, 1):
         prefix = f"[{i:>4}/{len(to_update)}] {symbol:<8}"
         try:
-            df = fetch_incremental(symbol, since=since)
+            df, found_splits = fetch_incremental_with_splits(symbol, since=since)
+            if found_splits:
+                _queue_split(state, symbol, *found_splits[-1])
             if df.empty:
                 logger.info("%s  up to date", prefix)
                 results[symbol] = 0
@@ -483,6 +489,76 @@ def step_update(
         )
 
     return results
+
+
+def _queue_split(state: dict, symbol: str, split_date: date, ratio: float) -> None:
+    """Queue *symbol* for a history re-download, keeping the date it was first queued."""
+    pending = state.setdefault("split_refetch_pending", {})
+    added = pending.get(symbol, {}).get("added", str(date.today()))
+    pending[symbol] = {"split_date": str(split_date), "ratio": ratio, "added": added}
+    logger.info("%-8s  split %s (ratio %g), queued for re-download", symbol, split_date, ratio)
+
+
+def step_split_refetch(state: dict) -> set[str]:
+    """
+    Re-download the history of every symbol queued by a split and replace it.
+
+    See ADR 0002.  A symbol leaves ``state["split_refetch_pending"]`` once its
+    history is replaced, once the stored history turns out consistent, once
+    the re-download fails the gate, or after ``splits.max_pending_days``.  A
+    failed download or write, or a download Yahoo has not adjusted yet, stays
+    queued for the next run.  All replacements are written in one call.
+
+    Returns the symbols whose history was replaced.
+    """
+    pending: dict = state.get("split_refetch_pending") or {}
+    if not pending:
+        return set()
+
+    logger.info("SPLITS   re-downloading %d symbol(s)", len(pending))
+    today = date.today()
+    frames: dict[str, pd.DataFrame] = {}
+    for symbol, entry in list(pending.items()):
+        hint = f"run scripts/repair_split_adjustment.py --symbols {symbol}"
+        if (today - date.fromisoformat(entry["added"])).days > SPLIT_MAX_PENDING_DAYS:
+            logger.error(
+                "%-8s  split of %s unresolved since %s, dropped; %s",
+                symbol, entry["split_date"], entry["added"], hint,
+            )
+            del pending[symbol]
+            continue
+        try:
+            fresh, breaks = splits.prepare_refetch(symbol, DATA_DIR)
+        except splits.RefetchRejected as exc:
+            logger.error("%-8s  re-download rejected (%s), stored rows kept; %s", symbol, exc, hint)
+            del pending[symbol]
+        except Exception:  # per-symbol failure, retried next run
+            logger.exception("%-8s  re-download failed, retrying next run", symbol)
+        else:
+            split_date = date.fromisoformat(entry["split_date"])
+            if splits.shows_unadjusted_split(fresh, split_date, entry["ratio"]):
+                logger.warning("%-8s  history not adjusted for the split yet, retrying next run", symbol)
+            elif breaks == 0:
+                logger.info("%-8s  stored history already consistent", symbol)
+                del pending[symbol]
+            else:
+                frames[symbol] = fresh
+        time.sleep(SLEEP_BETWEEN_CALLS)
+
+    replaced: set[str] = set()
+    if frames:
+        try:
+            rows = splits.apply_refetches(frames, DATA_DIR)
+        except Exception:  # keep them queued, retried next run
+            logger.exception("SPLITS   write failed for %d symbol(s), retrying next run", len(frames))
+        else:
+            replaced = set(frames)
+            for symbol in replaced:
+                del pending[symbol]
+            logger.info("SPLITS   replaced %d rows for %s", rows, ", ".join(sorted(replaced)))
+
+    state["split_refetch_pending"] = pending
+    return replaced
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +635,10 @@ def run(batch_size: int, skip_update: bool, run_merge: bool, run_indices: bool =
         step_update(to_update, since=last_run, state=state)
     elif not skip_update and not last_run:
         logger.info("UPDATE   skipped — no previous run date in state.json")
+
+    # --- 2b. Re-download history of symbols that split (ADR 0002) ---
+    if not skip_update:
+        step_split_refetch(state)
 
     # --- 3. Optional fundamentals snapshot (auto-throttled to monthly) ---
     fundamentals_ran = False
