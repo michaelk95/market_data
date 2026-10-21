@@ -22,6 +22,11 @@ All notable changes to this project will be documented here.
   Series.
 
 ### Added
+- `scripts/check_null_keys.py`: read-only audit of the ohlcv, indices and
+  options tables. Reports null-key rows in each table and in the flat files,
+  flat-file symbols missing from the table (and which of those a migration
+  re-run recovers), and files the migration skips. Exits 1 when it finds a
+  problem.
 - `docs/research/options-null-keys.md` and ADR
   `docs/decisions/0001-drop-null-key-flat-rows.md`.
 
