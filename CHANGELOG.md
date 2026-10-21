@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.12.1] — 2026-10-20
+## [0.12.1] — 2026-10-20 ([#85](https://github.com/michaelk95/market_data/pull/85))
 
 ### Fixed
 - Rows with a null key no longer reach the ohlcv, indices or options tables
