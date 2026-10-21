@@ -7,13 +7,18 @@ Tests for fetch_tickers.py:
 """
 
 
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
 import pytest
 
 from market_data.fetch_tickers import (
+    IVV_CSV_URL,
+    IWM_CSV_URL,
     _inject_etf_rows,
     apply_date_added,
     clean_holdings,
+    fetch_etf_holdings,
     merge_holdings,
 )
 
@@ -493,3 +498,68 @@ class TestInjectEtfRows:
         result = _inject_etf_rows(df)
         etf_rows = result[result["index"].isin(["SECTOR_ETF", "BROAD_ETF"])]
         assert etf_rows["market_value"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# fetch_etf_holdings() and the latest-holdings.csv format
+# ---------------------------------------------------------------------------
+
+_LATEST_HOLDINGS_CSV = """iShares Russell 2000 ETF
+Fund Holdings as of,"Oct 19, 2026"
+Inception Date,"May 22, 2000"
+Shares Outstanding,"276,000,000.00"
+Stock,"-"
+Bond,"-"
+Cash,"-"
+Other,"-"
+
+Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date
+"BRK B","BERKSHIRE HATHAWAY INC CLASS B","Financials","Equity","1,000,000.00","1.00","1,000,000.00","1.00","1.00","United States","NYSE","USD","1.00","USD","-"
+"MOG A","MOOG INC CLASS A","Industrials","Equity","500,000.00","0.50","500,000.00","1.00","1.00","United States","NYSE","USD","1.00","USD","-"
+"FROG","JFROG","Information Technology","Equity","250,000.00","0.25","250,000.00","1.00","1.00","United States","NASDAQ","USD","1.00","USD","-"
+"-","RENT THE RUNWAY INC","Consumer Discretionary","Equity","2.51","0.00","2.51","1.00","0.00","United States","NO MARKET (E.G. UNLISTED)","USD","1.00","USD","-"
+"RTYZ6","RUSSELL 2000 EMINI CME DEC 26","Cash and/or Derivatives","Futures","0.00","0.00","1.00","1.00","1.00","-","Chicago Mercantile Exchange","USD","1.00","USD","-"
+"""
+
+
+def _mock_response(text: str, content_type: str = "text/plain; charset=utf-8"):
+    resp = MagicMock()
+    resp.text = text
+    resp.headers = {"Content-Type": content_type}
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+class TestFetchEtfHoldings:
+    def test_urls_use_latest_holdings_csv(self):
+        assert IWM_CSV_URL.endswith("/latest-holdings.csv")
+        assert IVV_CSV_URL.endswith("/latest-holdings.csv")
+
+    def test_parses_latest_holdings_format(self):
+        with patch("market_data.fetch_tickers.requests.get",
+                   return_value=_mock_response(_LATEST_HOLDINGS_CSV)):
+            raw = fetch_etf_holdings(IWM_CSV_URL)
+        result = clean_holdings(raw, "RUT2000")
+        assert list(result["symbol"]) == ["BRK-B", "MOG-A", "FROG"]
+        assert result["market_value"].iloc[0] == 1_000_000.0
+
+    def test_html_response_raises_clear_error(self):
+        html = "<!DOCTYPE html>\n<html><head></head><body>Holdings</body></html>"
+        with patch("market_data.fetch_tickers.requests.get",
+                   return_value=_mock_response(html, "text/csv;charset=UTF-8")), \
+                pytest.raises(ValueError, match="HTML"):
+            fetch_etf_holdings(IWM_CSV_URL)
+
+
+class TestShareClassNormalization:
+    @pytest.mark.parametrize("raw_symbol,expected", [
+        ("BRK B", "BRK-B"),
+        ("BF B", "BF-B"),
+        ("BH A", "BH-A"),
+        ("BRK.B", "BRK-B"),
+        (" AAPL ", "AAPL"),
+    ])
+    def test_share_class_separator_becomes_hyphen(self, raw_symbol, expected):
+        raw = _raw_holdings([raw_symbol], ["X"], ["1.00"])
+        result = clean_holdings(raw, "SP500")
+        assert result["symbol"].tolist() == [expected]
