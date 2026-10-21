@@ -4,6 +4,18 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.12.2] — 2026-10-20
+
+### Added
+- `docs/data-schemas.md`: every table's path, columns and types, dedup key,
+  writer and how it fills the bitemporal fields, plus the files outside the
+  tables (`merged.parquet`, `constituent_history.parquet`, `tickers.csv`,
+  `state.json`) ([#72](https://github.com/michaelk95/market_data/issues/72)).
+  `tests/test_data_schema_docs.py` fails when the doc and `schema.py` drift
+  apart. Linked from the README.
+
+---
+
 ## [0.12.1] — 2026-10-20 ([#85](https://github.com/michaelk95/market_data/pull/85))
 
 ### Fixed
