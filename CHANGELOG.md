@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.14.0] — 2026-10-21
+## [0.14.0] — 2026-10-21 ([#91](https://github.com/michaelk95/market_data/pull/91))
 
 ### Fixed
 - OHLCV history is re-downloaded after a stock split. Bars were stored
