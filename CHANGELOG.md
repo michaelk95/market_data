@@ -4,6 +4,18 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.13.1] — 2026-10-20 ([#89](https://github.com/michaelk95/market_data/pull/89))
+
+### Added
+- `docs/research/delisted-ohlcv-sources.md`: Stooq and Tiingo checked as a
+  second OHLCV source for delisted tickers ([#67](https://github.com/michaelk95/market_data/issues/67)).
+  Stooq drops delisted tickers and blocks scripted downloads. Tiingo's public
+  ticker list covers CELG, ATVI and TWX over their full S&P 500 membership and
+  148 of the 503 failed backfill tickers at 90% or more. Its actual prices are
+  unverified, and #67 is parked.
+
+---
+
 ## [0.13.0] — 2026-10-20 ([#88](https://github.com/michaelk95/market_data/pull/88))
 
 ### Added
