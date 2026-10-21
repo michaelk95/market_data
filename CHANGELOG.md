@@ -4,6 +4,25 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.12.3] — 2026-10-20 ([#87](https://github.com/michaelk95/market_data/pull/87))
+
+### Fixed
+- The ticker-list refresh works again. It had failed on every run since
+  2026-10-04 with "Could not locate the 'Ticker' header row", leaving
+  `tickers.csv` at its 2026-04-04 contents. iShares' old
+  `1467271812596.ajax?fileType=csv` endpoints now return the HTML product
+  page; `fetch_tickers` uses the new `.../latest-holdings.csv` endpoints.
+- Share-class tickers in the new CSV (`BRK B`, `BF B`, `MOG A`, ...) are
+  normalised to yfinance's hyphen form (`BRK-B`), so existing symbols aren't
+  marked dropped and re-added under a new name.
+- An HTML response from iShares now raises an error saying so, instead of the
+  misleading missing-header message.
+
+### Added
+- `docs/research/ishares-holdings-url.md`.
+
+---
+
 ## [0.12.2] — 2026-10-20 ([#86](https://github.com/michaelk95/market_data/pull/86))
 
 ### Added
