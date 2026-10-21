@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.12.2] — 2026-10-20
+## [0.12.2] — 2026-10-20 ([#86](https://github.com/michaelk95/market_data/pull/86))
 
 ### Added
 - `docs/data-schemas.md`: every table's path, columns and types, dedup key,
