@@ -88,6 +88,7 @@ sources:
     ohlcv:         5
     options:       5
     fundamentals:  2
+    analyst_estimates: 2
     indices:       3
 
 # ---------------------------------------------------------------------------

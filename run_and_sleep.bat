@@ -24,10 +24,11 @@ echo ======================================== >> %LOG_FILE%
 :: Run pipeline — stdout and stderr both go to the log
 :: --indices     : update VIX, Treasury yields, Fed Funds futures (daily)
 :: --macro       : update FRED macro series — CPI, GDP, etc. (daily, incremental)
-:: --fundamentals: snapshot market cap + analyst data (auto-skipped if <30 days old)
+:: --fundamentals: snapshot market cap, P/E, margins etc. (auto-skipped if <30 days old)
+:: --analyst-estimates: daily snapshot of analyst price targets + recommendation
 :: --options     : next batch of SP500 option chains (50 tickers/day, cycles ~10 days)
 :: --merge       : rebuild merged.parquet for the backtest engine
-market-data-run --indices --macro --fundamentals --options --merge >> %LOG_FILE% 2>&1
+market-data-run --indices --macro --fundamentals --analyst-estimates --options --merge >> %LOG_FILE% 2>&1
 
 :: Log finish
 echo ======================================== >> %LOG_FILE%

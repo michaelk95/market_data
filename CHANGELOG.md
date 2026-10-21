@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.13.0] — 2026-10-20
+
+### Added
+- The nightly run collects analyst estimates again. `run_and_sleep.bat` now
+  passes `--analyst-estimates` to `market-data-run`, so the
+  `analyst_estimates` table gets a daily snapshot of price targets,
+  recommendation score and analyst count. Since PR #40 moved these fields
+  out of fundamentals, the batch file never passed the flag, so nothing was
+  collected after 2026-04-05. That gap can't be backfilled. This adds about
+  90 minutes to the nightly run.
+- `sources.sleep_between_calls.analyst_estimates: 2` in `config.yaml`. The
+  value was hard-coded as a default before.
+- `tests/test_runner_script.py` checks the nightly command, without running
+  it, and the config key. `docs/research/nightly-analyst-estimates.md`.
+
+---
+
 ## [0.12.2] — 2026-10-20 ([#86](https://github.com/michaelk95/market_data/pull/86))
 
 ### Added
