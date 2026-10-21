@@ -19,14 +19,20 @@ Column mapping
   for options chains (fetched before the open).
 - ``source`` is ``yfinance``; ``collected_at`` is supplied by the caller.
 - Values are cast to ``schema.TABLE_SCHEMAS`` (e.g. ``volume`` int64 → float64).
+- Rows with a null key (``schema.DEDUP_KEYS``) are dropped with a warning:
+  they can't be deduplicated or attributed to a symbol (ADR 0001).
 """
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 import pyarrow as pa
 
-from market_data.schema import TABLE_SCHEMAS, DataSource, ReportTimeMarker
+from market_data.schema import DEDUP_KEYS, TABLE_SCHEMAS, DataSource, ReportTimeMarker
+
+logger = logging.getLogger(__name__)
 
 OHLCV_FLAT_COLS = ["date", "symbol", "open", "high", "low", "close", "volume"]
 OPTIONS_FLAT_COLS = [
@@ -63,6 +69,28 @@ def _check_table(table: str) -> None:
         )
 
 
+def flat_key_columns(table: str) -> list[str]:
+    """Dedup-key columns of *table* in the flat layout."""
+    _check_table(table)
+    date_col = FLAT_DATE_COLUMN[table]
+    return [date_col if c == "period_start_date" else c for c in DEDUP_KEYS[table]]
+
+
+def drop_null_keys(flat: pd.DataFrame, table: str) -> pd.DataFrame:
+    """Drop rows of *flat* with a null key column, logging counts per symbol."""
+    keys = [c for c in flat_key_columns(table) if c in flat.columns]
+    bad = flat[keys].isna().any(axis=1)
+    if not bad.any():
+        return flat
+    per_symbol = flat.loc[bad, "symbol"].fillna("<no symbol>").value_counts().sort_index()
+    logger.warning(
+        "%s: dropped %d row(s) with a null key (%s): %s",
+        table, int(bad.sum()), ", ".join(keys),
+        ", ".join(f"{sym}={n}" for sym, n in per_symbol.items()),
+    )
+    return flat[~bad]
+
+
 def to_bitemporal(flat: pd.DataFrame, table: str, collected_at: pd.Timestamp) -> pd.DataFrame:
     """Add the bitemporal columns to *flat* (no casting; see ``conform_to_schema``)."""
     _check_table(table)
@@ -93,8 +121,11 @@ def conform_to_schema(df: pd.DataFrame, table: str) -> pd.DataFrame:
 
 
 def from_flat(flat: pd.DataFrame, table: str, collected_at: pd.Timestamp) -> pd.DataFrame:
-    """Convert a flat collector frame to *table*'s bitemporal schema."""
-    return conform_to_schema(to_bitemporal(flat, table, collected_at), table)
+    """Convert a flat collector frame to *table*'s bitemporal schema.
+
+    Rows with a null key are dropped first (see ``drop_null_keys``).
+    """
+    return conform_to_schema(to_bitemporal(drop_null_keys(flat, table), table, collected_at), table)
 
 
 def to_flat(df: pd.DataFrame, table: str) -> pd.DataFrame:

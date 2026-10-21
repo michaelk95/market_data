@@ -4,6 +4,34 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.12.1] — 2026-10-20 ([#85](https://github.com/michaelk95/market_data/pull/85))
+
+### Fixed
+- Rows with a null key no longer reach the ohlcv, indices or options tables
+  ([#74](https://github.com/michaelk95/market_data/issues/74)). New
+  `flat_tables.drop_null_keys` drops flat rows with a null dedup-key column
+  (e.g. options `snapshot_date`, `symbol`, `expiry`, `strike`,
+  `option_type`) and logs a warning with counts per symbol. `from_flat`
+  applies it, so the live writers store the rest of the batch.
+- `scripts/migrate_flat_tables.py` no longer skips a whole options file
+  because it holds legacy rows with a null `symbol`. It drops those rows and
+  migrates the good ones. Files skipped by an earlier migration are recovered
+  by re-running `scripts/migrate_flat_tables.py --table options`.
+- `fetch_option_chain` stores a missing `inTheMoney` as null, using a
+  nullable boolean indexed like the yfinance chain, instead of an empty
+  Series.
+
+### Added
+- `scripts/check_null_keys.py`: read-only audit of the ohlcv, indices and
+  options tables. Reports null-key rows in each table and in the flat files,
+  flat-file symbols missing from the table (and which of those a migration
+  re-run recovers), and files the migration skips. Exits 1 when it finds a
+  problem.
+- `docs/research/options-null-keys.md` and ADR
+  `docs/decisions/0001-drop-null-key-flat-rows.md`.
+
+---
+
 ## [0.12.0] — 2026-10-19 ([#83](https://github.com/michaelk95/market_data/pull/83))
 
 ### Added
