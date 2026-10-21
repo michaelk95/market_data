@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.12.2] — 2026-10-20
+## [0.12.3] — 2026-10-20 ([#87](https://github.com/michaelk95/market_data/pull/87))
 
 ### Fixed
 - The ticker-list refresh works again. It had failed on every run since
@@ -20,6 +20,18 @@ All notable changes to this project will be documented here.
 
 ### Added
 - `docs/research/ishares-holdings-url.md`.
+
+---
+
+## [0.12.2] — 2026-10-20 ([#86](https://github.com/michaelk95/market_data/pull/86))
+
+### Added
+- `docs/data-schemas.md`: every table's path, columns and types, dedup key,
+  writer and how it fills the bitemporal fields, plus the files outside the
+  tables (`merged.parquet`, `constituent_history.parquet`, `tickers.csv`,
+  `state.json`) ([#72](https://github.com/michaelk95/market_data/issues/72)).
+  `tests/test_data_schema_docs.py` fails when the doc and `schema.py` drift
+  apart. Linked from the README.
 
 ---
 
