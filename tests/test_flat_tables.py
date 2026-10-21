@@ -8,7 +8,7 @@ import datetime
 import pandas as pd
 import pytest
 
-from market_data.flat_tables import FLAT_COLUMNS, from_flat, to_flat
+from market_data.flat_tables import FLAT_COLUMNS, drop_null_keys, from_flat, to_flat
 from market_data.schema import TABLE_SCHEMAS
 
 _AT = pd.Timestamp("2026-10-19 21:00:00", tz="UTC")
@@ -72,3 +72,44 @@ class TestToFlat:
         back = to_flat(empty, "ohlcv")
         assert back.empty
         assert list(back.columns) == FLAT_COLUMNS["ohlcv"]
+
+
+class TestDropNullKeys:
+    """Rows with a null dedup key are dropped before writing (issue #74, ADR 0001)."""
+
+    @pytest.mark.parametrize("column", ["snapshot_date", "symbol", "expiry", "strike", "option_type"])
+    def test_options_null_key_row_dropped(self, options_df, column):
+        bad = options_df.assign(strike=191.0).assign(**{column: None})
+        out = drop_null_keys(pd.concat([options_df, bad], ignore_index=True), "options")
+        assert len(out) == 1
+        assert out["strike"].iloc[0] == 190.0
+
+    def test_ohlcv_null_date_dropped(self, ohlcv_df):
+        flat = ohlcv_df.astype({"date": object})
+        flat.loc[flat.index[0], "date"] = None
+        out = drop_null_keys(flat, "ohlcv")
+        assert len(out) == len(ohlcv_df) - 1
+
+    def test_null_value_columns_kept(self, options_df):
+        out = drop_null_keys(options_df.assign(bid=None, in_the_money=None), "options")
+        assert len(out) == 1
+
+    def test_logs_count_per_symbol(self, options_df, caplog):
+        bad = options_df.assign(expiry=None, strike=[191.0])
+        no_symbol = options_df.assign(symbol=None, strike=[192.0])
+        with caplog.at_level("WARNING", logger="market_data.flat_tables"):
+            drop_null_keys(pd.concat([options_df, bad, no_symbol], ignore_index=True), "options")
+        assert "options: dropped 2 row(s) with a null key" in caplog.text
+        assert "AAPL=1" in caplog.text
+        assert "<no symbol>=1" in caplog.text
+
+    def test_clean_frame_logs_nothing(self, options_df, caplog):
+        with caplog.at_level("WARNING", logger="market_data.flat_tables"):
+            out = drop_null_keys(options_df, "options")
+        assert len(out) == 1
+        assert caplog.text == ""
+
+    def test_from_flat_drops_null_keys(self, options_df):
+        bad = options_df.assign(symbol=None, strike=[191.0])
+        out = from_flat(pd.concat([options_df, bad], ignore_index=True), "options", _AT)
+        assert out["symbol"].tolist() == ["AAPL"]

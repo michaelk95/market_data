@@ -7,7 +7,8 @@ No network calls: fetch_option_chain is patched.
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -91,3 +92,58 @@ class TestRun:
         ):
             fetch_options.run(list(chains), data_dir=tmp_path)
         assert spy.call_count == 1
+
+
+class TestNullKeys:
+    """Issue #74: rows with a null key never reach the options table."""
+
+    @pytest.mark.parametrize("column", ["symbol", "expiry", "strike"])
+    def test_null_key_rows_not_stored(self, options_df, tmp_path, caplog, column):
+        bad = options_df.assign(strike=191.0).assign(**{column: None})
+        with caplog.at_level("WARNING", logger="market_data.flat_tables"):
+            written = save_options_snapshot(pd.concat([options_df, bad], ignore_index=True), tmp_path)
+
+        stored = read_table("options", tmp_path)
+        assert written == 1
+        assert stored[["symbol", "expiry", "strike"]].notna().all().all()
+        assert "null key" in caplog.text
+
+    def test_all_null_key_rows_writes_nothing(self, options_df, tmp_path):
+        assert save_options_snapshot(options_df.assign(symbol=None), tmp_path) == 0
+        assert read_table("options", tmp_path).empty
+
+
+def _fake_ticker(calls: pd.DataFrame, puts: pd.DataFrame) -> MagicMock:
+    ticker = MagicMock()
+    ticker.options = ("2024-02-16",)
+    ticker.option_chain.return_value = SimpleNamespace(calls=calls, puts=puts)
+    return ticker
+
+
+class TestFetchOptionChain:
+    """Regression guard for the constructor that once produced null keys (77894b5)."""
+
+    @pytest.mark.parametrize("index", [None, [5, 6]], ids=["range-index", "other-index"])
+    def test_missing_in_the_money_keeps_keys(self, index):
+        raw = pd.DataFrame(
+            {"strike": [190.0, 195.0], "lastPrice": [5.5, 3.0], "bid": [5.4, 2.9],
+             "ask": [5.6, 3.1], "volume": [10, 20], "openInterest": [100, 200],
+             "impliedVolatility": [0.25, 0.26]},
+            index=index,
+        )
+        ticker = _fake_ticker(calls=raw, puts=raw.iloc[0:0])
+        with patch.object(fetch_options.yf, "Ticker", return_value=ticker):
+            df = fetch_options.fetch_option_chain("AAPL", max_expiries=1)
+
+        assert len(df) == 2
+        assert df[["snapshot_date", "symbol", "expiry", "strike", "option_type"]].notna().all().all()
+        assert df["in_the_money"].isna().all()
+        assert df["strike"].tolist() == [190.0, 195.0]
+
+    def test_in_the_money_passed_through(self):
+        raw = pd.DataFrame({"strike": [190.0], "inTheMoney": [True]})
+        ticker = _fake_ticker(calls=raw, puts=raw.assign(inTheMoney=False))
+        with patch.object(fetch_options.yf, "Ticker", return_value=ticker):
+            df = fetch_options.fetch_option_chain("AAPL", max_expiries=1)
+
+        assert df.set_index("option_type")["in_the_money"].to_dict() == {"call": True, "put": False}

@@ -187,7 +187,10 @@ def fetch_option_chain(symbol: str, max_expiries: int) -> pd.DataFrame:
                 "volume": pd.to_numeric(df_raw.get("volume"), errors="coerce"),
                 "open_interest": pd.to_numeric(df_raw.get("openInterest"), errors="coerce"),
                 "implied_vol": pd.to_numeric(df_raw.get("impliedVolatility"), errors="coerce"),
-                "in_the_money": df_raw.get("inTheMoney", pd.Series(dtype=bool)),
+                # Unknown when Yahoo omits it; indexed like df_raw so it can't add rows.
+                "in_the_money": df_raw.get(
+                    "inTheMoney", pd.Series(pd.NA, index=df_raw.index, dtype="boolean")
+                ),
             })
 
             frames.append(df[OPTIONS_COLS])

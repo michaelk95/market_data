@@ -55,6 +55,7 @@ from market_data.flat_tables import (  # noqa: F401  (re-exported for callers)
     FLAT_DATE_COLUMN,
     REPORT_TIME_MARKER,
     conform_to_schema,
+    drop_null_keys,
     to_bitemporal,
 )
 from market_data.storage import write_table
@@ -106,6 +107,9 @@ def _load_chunk(files: list[Path], table: str) -> pd.DataFrame:
         except (OSError, pa.ArrowException) as exc:
             logger.error("%s  failed to read: %s", path.name, exc)
             continue
+        # Legacy rows with a null key (issue #74) would otherwise put a NaN in
+        # the symbol check below and skip the whole file.
+        flat = drop_null_keys(flat, table)
         if flat.empty:
             continue
         # A per-symbol file holds exactly its own symbol. Anything else (e.g. a
