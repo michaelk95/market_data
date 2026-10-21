@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.13.1] — 2026-10-20
+## [0.13.1] — 2026-10-20 ([#89](https://github.com/michaelk95/market_data/pull/89))
 
 ### Added
 - `docs/research/delisted-ohlcv-sources.md`: Stooq and Tiingo checked as a
