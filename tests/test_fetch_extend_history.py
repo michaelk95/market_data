@@ -146,10 +146,9 @@ class TestRun:
         return {"onboarded": tickers, "extend_history_completed": [], "extend_history_failures": {}}
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_fetches_shallow_tickers(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         _store(data_dir, _ohlcv("AAPL", "2015-01-02"))
 
@@ -159,7 +158,6 @@ class TestRun:
         mock_state_path.write_text = state_file.write_text
 
         mock_fetch.return_value = _ohlcv("AAPL", "1993-01-29", n=100)
-        mock_save.return_value = 80
 
         result = run(data_dir=data_dir, batch_size=0, dry_run=False)
 
@@ -168,10 +166,9 @@ class TestRun:
         assert result["failed"] == 0
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_deep_tickers_marked_complete_without_fetch(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         _store(data_dir, _ohlcv("SPY", "1988-01-04"))
 
@@ -188,10 +185,9 @@ class TestRun:
         assert "SPY" in saved_state["extend_history_completed"]
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_batch_size_limits_fetches(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         for t in ["AAA", "BBB", "CCC"]:
             _store(data_dir, _ohlcv(t, "2015-01-02"))
@@ -201,7 +197,6 @@ class TestRun:
         mock_state_path.read_text = state_file.read_text
         mock_state_path.write_text = state_file.write_text
         mock_fetch.return_value = _ohlcv("AAA", "1993-01-29", n=50)
-        mock_save.return_value = 40
 
         result = run(data_dir=data_dir, batch_size=1, dry_run=False)
 
@@ -210,10 +205,9 @@ class TestRun:
         assert result["remaining"] == 2
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_empty_data_recorded_as_failure(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         _store(data_dir, _ohlcv("AAPL", "2015-01-02"))
 
@@ -226,15 +220,14 @@ class TestRun:
         result = run(data_dir=data_dir, batch_size=0, dry_run=False)
 
         assert result["failed"] == 1
-        mock_save.assert_not_called()
+        assert len(read_table("ohlcv", data_dir)) == 5  # nothing new written
         saved_state = json.loads(state_file.read_text())
         assert "AAPL" in saved_state["extend_history_failures"]
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_dry_run_makes_no_network_calls(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         _store(data_dir, _ohlcv("AAPL", "2015-01-02"))
 
@@ -243,16 +236,18 @@ class TestRun:
         mock_state_path.read_text = state_file.read_text
         mock_state_path.write_text = state_file.write_text
 
+        before = state_file.read_text()
+
         run(data_dir=data_dir, batch_size=0, dry_run=True)
 
         mock_fetch.assert_not_called()
-        mock_save.assert_not_called()
+        assert len(read_table("ohlcv", data_dir)) == 5  # nothing new written
+        assert state_file.read_text() == before
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_completed_tickers_persisted_to_state(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         _store(data_dir, _ohlcv("AAPL", "2015-01-02"))
 
@@ -261,7 +256,6 @@ class TestRun:
         mock_state_path.read_text = state_file.read_text
         mock_state_path.write_text = state_file.write_text
         mock_fetch.return_value = _ohlcv("AAPL", "1993-01-29", n=100)
-        mock_save.return_value = 80
 
         run(data_dir=data_dir, batch_size=0, dry_run=False)
 
@@ -269,10 +263,9 @@ class TestRun:
         assert "AAPL" in saved_state["extend_history_completed"]
 
     @patch("market_data.fetch_extend_history.fetch_max_history")
-    @patch("market_data.fetch_extend_history.save_ticker_data")
     @patch("market_data.fetch_extend_history.STATE_FILE")
     def test_no_onboarded_tickers_returns_early(
-        self, mock_state_path, mock_save, mock_fetch, data_dir, tmp_path, state_file
+        self, mock_state_path, mock_fetch, data_dir, tmp_path, state_file
     ):
         state_file.write_text(json.dumps({"onboarded": [], "extend_history_completed": [], "extend_history_failures": {}}))
         mock_state_path.exists.return_value = True
@@ -283,3 +276,59 @@ class TestRun:
 
         mock_fetch.assert_not_called()
         assert result == {"fetched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+
+# ---------------------------------------------------------------------------
+# run() — batched ohlcv writes
+# ---------------------------------------------------------------------------
+
+class TestRunBatchedWrites:
+    @pytest.fixture()
+    def env(self, tmp_path, monkeypatch):
+        from market_data import fetch, fetch_extend_history
+
+        data_dir = tmp_path / "data"
+        state_file = tmp_path / "state.json"
+        tickers = ["AAA", "BBB", "CCC"]
+        for t in tickers:
+            _store(data_dir, _ohlcv(t, "2015-01-02"))
+        state_file.write_text(json.dumps(
+            {"onboarded": tickers, "extend_history_completed": [], "extend_history_failures": {}}
+        ))
+        env: dict = {"data_dir": data_dir, "state_file": state_file, "writes": []}
+        monkeypatch.setattr(fetch_extend_history, "STATE_FILE", state_file)
+        monkeypatch.setattr(fetch_extend_history, "SLEEP_BETWEEN_CALLS", 0)
+        monkeypatch.setattr(fetch, "DEFAULT_WRITE_BATCH_SYMBOLS", 2)
+        monkeypatch.setattr(
+            fetch_extend_history, "fetch_max_history", lambda t: _ohlcv(t, "1993-01-29", n=10)
+        )
+        real_write = fetch.write_table_counts
+
+        def spy(df, table, data_dir):
+            env["writes"].append(sorted(df["symbol"].unique()))
+            if env.get("fail_write"):
+                raise OSError("disk full")
+            return real_write(df, table, data_dir)
+
+        monkeypatch.setattr(fetch, "write_table_counts", spy)
+        return env
+
+    def test_one_write_per_batch_of_symbols(self, env):
+        result = run(data_dir=env["data_dir"], batch_size=0, dry_run=False)
+
+        assert env["writes"] == [["AAA", "BBB"], ["CCC"]]
+        assert result["fetched"] == 3
+        saved = json.loads(env["state_file"].read_text())
+        assert sorted(saved["extend_history_completed"]) == ["AAA", "BBB", "CCC"]
+        assert len(read_table("ohlcv", env["data_dir"])) == 3 * 5 + 3 * 10
+
+    def test_failed_write_leaves_batch_incomplete(self, env):
+        env["fail_write"] = True
+
+        result = run(data_dir=env["data_dir"], batch_size=0, dry_run=False)
+
+        assert result["fetched"] == 0
+        assert result["failed"] == 3
+        saved = json.loads(env["state_file"].read_text())
+        assert saved["extend_history_completed"] == []
+        assert set(saved["extend_history_failures"]) == {"AAA", "BBB", "CCC"}

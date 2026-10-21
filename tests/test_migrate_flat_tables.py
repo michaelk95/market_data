@@ -352,6 +352,26 @@ class TestMigrateOptions:
         _assert_matches_schema(parts[0], "options")
 
 
+    def test_legacy_null_key_rows_do_not_skip_the_file(self, flat_data: Path, caplog) -> None:
+        """Issue #74: old options files hold rows with null snapshot_date/symbol/expiry.
+
+        The good rows must still migrate; only the null-key rows are dropped.
+        """
+        good = _flat_options("AAPL", datetime.date(2026, 4, 7))
+        legacy = good.assign(snapshot_date=None, symbol=None, expiry=None, strike=[190.0, 195.0, 200.0])
+        _write_flat(flat_data / "options" / "AAPL.parquet", pd.concat([good, legacy], ignore_index=True))
+
+        with caplog.at_level("WARNING"):
+            written = migrate_flat_tables.run("options", flat_data)
+
+        df = read_table("options", flat_data)
+        assert written == 3
+        assert set(df["symbol"]) == {"AAPL"}
+        assert df[["period_start_date", "expiry", "strike"]].notna().all().all()
+        assert "null key" in caplog.text
+        assert "skipped" not in caplog.text
+
+
 def test_unknown_table_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="fundamentals"):
         migrate_flat_tables.run("fundamentals", tmp_path)

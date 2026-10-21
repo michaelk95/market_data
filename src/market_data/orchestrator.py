@@ -58,9 +58,10 @@ from market_data import metrics, resilience
 from market_data.config import cfg as _cfg
 from market_data.fetch import (
     DEFAULT_HISTORY_YEARS,
+    BatchWriteError,
+    TickerBatchWriter,
     fetch_history,
     fetch_incremental,
-    save_ticker_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -352,7 +353,25 @@ def step_onboard(
         len(pending) - len(to_onboard),
     )
 
+    def flush() -> None:
+        # Symbols count as onboarded only once the write holding them succeeds.
+        try:
+            counts = writer.flush()
+        except BatchWriteError as exc:
+            logger.exception("ONBOARD  write failed for %d symbol(s)", len(exc.symbols))
+            for symbol in exc.symbols:
+                failed.add(symbol)
+                resilience.record_failure(state, symbol, str(exc))
+                metrics.record_symbol_result(symbol, success=False, reason=str(exc))
+            return
+        for symbol, added in counts.items():
+            newly_onboarded.add(symbol)
+            resilience.clear_failure(state, symbol)
+            logger.info("%-8s  %d rows saved", symbol, added)
+            metrics.record_symbol_result(symbol, success=True, rows_written=added)
+
     metrics.start_run("onboard")
+    writer = TickerBatchWriter(DATA_DIR)
     for i, symbol in enumerate(to_onboard, 1):
         prefix = f"[{i:>3}/{len(to_onboard)}] {symbol:<8}"
         try:
@@ -362,19 +381,19 @@ def step_onboard(
                 metrics.record_symbol_result(symbol, success=False, reason="no data")
                 resilience.record_failure(state, symbol, "no data")
             else:
-                added = save_ticker_data(symbol, df, DATA_DIR)
-                newly_onboarded.add(symbol)
-                resilience.clear_failure(state, symbol)
-                logger.info("%s  %d rows saved", prefix, added)
-                metrics.record_symbol_result(symbol, success=True, rows_written=added)
+                writer.add(symbol, df)
+                logger.info("%s  %d rows fetched", prefix, len(df))
         except Exception as exc:
             logger.exception("%s  ERROR", prefix)
             failed.add(symbol)
             resilience.record_failure(state, symbol, str(exc))
             metrics.record_symbol_result(symbol, success=False, reason=str(exc))
 
+        if writer.full:
+            flush()
         time.sleep(SLEEP_BETWEEN_CALLS)
 
+    flush()
     metrics.finish_run()
 
     # Silent failure detection
@@ -404,8 +423,28 @@ def step_update(
 
     logger.info("UPDATE   %d tickers  (since %s)", len(to_update), since)
 
-    metrics.start_run("update")
     total_rows = 0
+
+    def flush() -> None:
+        nonlocal total_rows
+        try:
+            counts = writer.flush()
+        except BatchWriteError as exc:
+            logger.exception("UPDATE   write failed for %d symbol(s)", len(exc.symbols))
+            for symbol in exc.symbols:
+                results[symbol] = 0
+                resilience.record_failure(state, symbol, str(exc))
+                metrics.record_symbol_result(symbol, success=False, reason=str(exc))
+            return
+        for symbol, added in counts.items():
+            logger.info("%-8s  +%d rows", symbol, added)
+            results[symbol] = added
+            total_rows += added
+            resilience.clear_failure(state, symbol)
+            metrics.record_symbol_result(symbol, success=True, rows_written=added)
+
+    metrics.start_run("update")
+    writer = TickerBatchWriter(DATA_DIR)
     for i, symbol in enumerate(to_update, 1):
         prefix = f"[{i:>4}/{len(to_update)}] {symbol:<8}"
         try:
@@ -413,22 +452,21 @@ def step_update(
             if df.empty:
                 logger.info("%s  up to date", prefix)
                 results[symbol] = 0
+                resilience.clear_failure(state, symbol)
                 metrics.record_symbol_result(symbol, success=True, rows_written=0)
             else:
-                added = save_ticker_data(symbol, df, DATA_DIR)
-                logger.info("%s  +%d rows", prefix, added)
-                results[symbol] = added
-                total_rows += added
-                metrics.record_symbol_result(symbol, success=True, rows_written=added)
-            resilience.clear_failure(state, symbol)
+                writer.add(symbol, df)
         except Exception as exc:
             logger.exception("%s  ERROR", prefix)
             results[symbol] = 0
             resilience.record_failure(state, symbol, str(exc))
             metrics.record_symbol_result(symbol, success=False, reason=str(exc))
 
+        if writer.full:
+            flush()
         time.sleep(SLEEP_BETWEEN_CALLS)
 
+    flush()
     metrics.finish_run()
 
     # Silent failure detection: if last_run was recent but all symbols returned 0

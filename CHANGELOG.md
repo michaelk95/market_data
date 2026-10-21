@@ -4,11 +4,126 @@ All notable changes to this project will be documented here.
 
 ---
 
-## [0.11.1] — 2026-10-20
+## [0.13.2] — 2026-10-20 ([#90](https://github.com/michaelk95/market_data/pull/90))
 
 ### Changed
 - Test docstring in `tests/test_migrate_flat_tables.py` no longer says MD-10
   is pending; the collector has written the bitemporal tables since 0.11.0.
+
+---
+
+## [0.13.1] — 2026-10-20 ([#89](https://github.com/michaelk95/market_data/pull/89))
+
+### Added
+- `docs/research/delisted-ohlcv-sources.md`: Stooq and Tiingo checked as a
+  second OHLCV source for delisted tickers ([#67](https://github.com/michaelk95/market_data/issues/67)).
+  Stooq drops delisted tickers and blocks scripted downloads. Tiingo's public
+  ticker list covers CELG, ATVI and TWX over their full S&P 500 membership and
+  148 of the 503 failed backfill tickers at 90% or more. Its actual prices are
+  unverified, and #67 is parked.
+
+---
+
+## [0.13.0] — 2026-10-20 ([#88](https://github.com/michaelk95/market_data/pull/88))
+
+### Added
+- The nightly run collects analyst estimates again. `run_and_sleep.bat` now
+  passes `--analyst-estimates` to `market-data-run`, so the
+  `analyst_estimates` table gets a daily snapshot of price targets,
+  recommendation score and analyst count. Since PR #40 moved these fields
+  out of fundamentals, the batch file never passed the flag, so nothing was
+  collected after 2026-04-05. That gap can't be backfilled. This adds about
+  90 minutes to the nightly run.
+- `sources.sleep_between_calls.analyst_estimates: 2` in `config.yaml`. The
+  value was hard-coded as a default before.
+- `tests/test_runner_script.py` checks the nightly command, without running
+  it, and the config key. `docs/research/nightly-analyst-estimates.md`.
+
+---
+
+## [0.12.3] — 2026-10-20 ([#87](https://github.com/michaelk95/market_data/pull/87))
+
+### Fixed
+- The ticker-list refresh works again. It had failed on every run since
+  2026-10-04 with "Could not locate the 'Ticker' header row", leaving
+  `tickers.csv` at its 2026-04-04 contents. iShares' old
+  `1467271812596.ajax?fileType=csv` endpoints now return the HTML product
+  page; `fetch_tickers` uses the new `.../latest-holdings.csv` endpoints.
+- Share-class tickers in the new CSV (`BRK B`, `BF B`, `MOG A`, ...) are
+  normalised to yfinance's hyphen form (`BRK-B`), so existing symbols aren't
+  marked dropped and re-added under a new name.
+- An HTML response from iShares now raises an error saying so, instead of the
+  misleading missing-header message.
+
+### Added
+- `docs/research/ishares-holdings-url.md`.
+
+---
+
+## [0.12.2] — 2026-10-20 ([#86](https://github.com/michaelk95/market_data/pull/86))
+
+### Added
+- `docs/data-schemas.md`: every table's path, columns and types, dedup key,
+  writer and how it fills the bitemporal fields, plus the files outside the
+  tables (`merged.parquet`, `constituent_history.parquet`, `tickers.csv`,
+  `state.json`) ([#72](https://github.com/michaelk95/market_data/issues/72)).
+  `tests/test_data_schema_docs.py` fails when the doc and `schema.py` drift
+  apart. Linked from the README.
+
+---
+
+## [0.12.1] — 2026-10-20 ([#85](https://github.com/michaelk95/market_data/pull/85))
+
+### Fixed
+- Rows with a null key no longer reach the ohlcv, indices or options tables
+  ([#74](https://github.com/michaelk95/market_data/issues/74)). New
+  `flat_tables.drop_null_keys` drops flat rows with a null dedup-key column
+  (e.g. options `snapshot_date`, `symbol`, `expiry`, `strike`,
+  `option_type`) and logs a warning with counts per symbol. `from_flat`
+  applies it, so the live writers store the rest of the batch.
+- `scripts/migrate_flat_tables.py` no longer skips a whole options file
+  because it holds legacy rows with a null `symbol`. It drops those rows and
+  migrates the good ones. Files skipped by an earlier migration are recovered
+  by re-running `scripts/migrate_flat_tables.py --table options`.
+- `fetch_option_chain` stores a missing `inTheMoney` as null, using a
+  nullable boolean indexed like the yfinance chain, instead of an empty
+  Series.
+
+### Added
+- `scripts/check_null_keys.py`: read-only audit of the ohlcv, indices and
+  options tables. Reports null-key rows in each table and in the flat files,
+  flat-file symbols missing from the table (and which of those a migration
+  re-run recovers), and files the migration skips. Exits 1 when it finds a
+  problem.
+- `docs/research/options-null-keys.md` and ADR
+  `docs/decisions/0001-drop-null-key-flat-rows.md`.
+
+---
+
+## [0.12.0] — 2026-10-19 ([#83](https://github.com/michaelk95/market_data/pull/83))
+
+### Added
+- `fetch.TickerBatchWriter` buffers conformed OHLCV rows for many symbols and
+  writes them with one storage call per batch, so each `year=YYYY` partition
+  is rewritten once per batch instead of once per symbol. `flush()` returns
+  net-new rows per symbol. A failed write raises `fetch.BatchWriteError`,
+  which names every symbol in the batch. Batch size comes from
+  `collection.write_batch_symbols` (default 100).
+- `storage.write_table_counts` merges like `write_table` but returns net-new
+  rows per symbol.
+
+### Changed
+- The orchestrator's onboard and update steps, `fetch_extend_history.run` and
+  `fetch_backfill.run` write through `TickerBatchWriter` instead of one
+  `save_ticker_data` call per ticker. A ticker is marked onboarded or
+  complete, and its metrics are recorded, only after the write holding its
+  rows succeeds. If a batch write fails, every ticker in that batch is
+  recorded as failed and the run continues.
+- `write_table` now counts the incoming rows that survive deduplication,
+  instead of the row count after the write minus the count before. The two
+  differ only when a stored partition already held duplicate keys.
+
+---
 
 ## [0.11.0] — 2026-10-19 ([#82](https://github.com/michaelk95/market_data/pull/82))
 

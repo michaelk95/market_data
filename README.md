@@ -20,6 +20,9 @@ and small ones go in a single `data.parquet`. Read them with
 before 0.11.0 are no longer read; `scripts/migrate_flat_tables.py` copies them
 into the tables.
 
+Column-by-column schemas, dedup keys and how each table fills the bitemporal
+fields: [`docs/data-schemas.md`](docs/data-schemas.md).
+
 ---
 
 ## CLI commands

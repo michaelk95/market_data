@@ -12,6 +12,8 @@ import pandas as pd
 import pytest
 
 from market_data import orchestrator
+from market_data.fetch import save_ticker_data
+from market_data.storage import read_table
 
 # ---------------------------------------------------------------------------
 # load_state() / save_state()
@@ -244,3 +246,124 @@ class TestStepOptions:
         orchestrator.step_options({}, {"AAA", "BBB"}, batch_size=10, max_expiries=2)
 
         assert ("AAA", False) in options_calls["results"]
+
+
+# ---------------------------------------------------------------------------
+# step_onboard() / step_update()  — batched ohlcv writes
+# ---------------------------------------------------------------------------
+
+
+def _bars(symbol: str, start: str, n: int = 3) -> pd.DataFrame:
+    days = pd.date_range(start, periods=n, freq="B").date
+    return pd.DataFrame({
+        "date": days, "symbol": symbol, "open": 1.0, "high": 2.0,
+        "low": 0.5, "close": 1.5, "volume": 100.0,
+    })
+
+
+@pytest.fixture()
+def ohlcv_env(tmp_path, monkeypatch):
+    """Point the orchestrator at tmp_path and record metrics and storage writes."""
+    from market_data import fetch
+
+    env: dict = {"results": [], "writes": [], "frames": {}}
+    monkeypatch.setattr(orchestrator, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(orchestrator, "SLEEP_BETWEEN_CALLS", 0)
+    monkeypatch.setattr(fetch, "DEFAULT_WRITE_BATCH_SYMBOLS", 2)
+    monkeypatch.setattr(orchestrator.metrics, "start_run", lambda name: None)
+    monkeypatch.setattr(orchestrator.metrics, "finish_run", lambda: None)
+    monkeypatch.setattr(
+        orchestrator.metrics,
+        "record_symbol_result",
+        lambda s, success, rows_written=0, reason=None: env["results"].append(
+            (s, success, rows_written)
+        ),
+    )
+    real_write = fetch.write_table_counts
+
+    def spy(df, table, data_dir):
+        env["writes"].append(sorted(df["symbol"].unique()))
+        if env.get("fail_write"):
+            raise OSError("disk full")
+        return real_write(df, table, data_dir)
+
+    monkeypatch.setattr(fetch, "write_table_counts", spy)
+
+    def fake_fetch(symbol, **kwargs):
+        frame = env["frames"][symbol]
+        if isinstance(frame, Exception):
+            raise frame
+        return frame
+
+    monkeypatch.setattr(orchestrator, "fetch_history", fake_fetch)
+    monkeypatch.setattr(orchestrator, "fetch_incremental", fake_fetch)
+    return env
+
+
+class TestStepOnboard:
+    def test_writes_once_per_batch_of_symbols(self, ohlcv_env, tmp_path):
+        ohlcv_env["frames"] = {s: _bars(s, "2023-12-28") for s in ("AAA", "BBB", "CCC")}
+        state: dict = {}
+
+        onboarded, failed = orchestrator.step_onboard(["AAA", "BBB", "CCC"], 10, set(), state)
+
+        assert ohlcv_env["writes"] == [["AAA", "BBB"], ["CCC"]]
+        assert onboarded == {"AAA", "BBB", "CCC"}
+        assert failed == set()
+        assert ohlcv_env["results"] == [("AAA", True, 3), ("BBB", True, 3), ("CCC", True, 3)]
+        assert len(read_table("ohlcv", tmp_path)) == 9
+
+    def test_fetch_error_and_empty_frame_do_not_block_batch(self, ohlcv_env):
+        ohlcv_env["frames"] = {
+            "AAA": _bars("AAA", "2024-01-02"),
+            "ERR": RuntimeError("boom"),
+            "NONE": _bars("NONE", "2024-01-02", n=0),
+            "BBB": _bars("BBB", "2024-01-02"),
+        }
+        state: dict = {}
+
+        onboarded, failed = orchestrator.step_onboard(["AAA", "ERR", "NONE", "BBB"], 10, set(), state)
+
+        assert onboarded == {"AAA", "BBB"}
+        assert failed == {"ERR"}
+        assert ohlcv_env["writes"] == [["AAA", "BBB"]]
+        assert "ERR" in state["fetch_failures"] and "NONE" in state["fetch_failures"]
+
+    def test_failed_write_marks_whole_batch_failed(self, ohlcv_env):
+        ohlcv_env["frames"] = {s: _bars(s, "2024-01-02") for s in ("AAA", "BBB")}
+        ohlcv_env["fail_write"] = True
+        state: dict = {}
+
+        onboarded, failed = orchestrator.step_onboard(["AAA", "BBB"], 10, set(), state)
+
+        assert onboarded == set()
+        assert failed == {"AAA", "BBB"}
+        assert set(state["fetch_failures"]) == {"AAA", "BBB"}
+        assert [r[:2] for r in ohlcv_env["results"]] == [("AAA", False), ("BBB", False)]
+
+
+class TestStepUpdate:
+    def test_per_symbol_counts_with_one_write_per_batch(self, ohlcv_env, tmp_path):
+        save_ticker_data("AAA", _bars("AAA", "2024-01-02", n=2), tmp_path)
+        ohlcv_env["writes"].clear()
+        ohlcv_env["frames"] = {
+            "AAA": _bars("AAA", "2024-01-02", n=4),  # 2 already stored
+            "BBB": _bars("BBB", "2024-01-02", n=1),
+        }
+
+        results = orchestrator.step_update(["AAA", "BBB"], date(2024, 1, 2), {})
+
+        assert results == {"AAA": 2, "BBB": 1}
+        assert ohlcv_env["writes"] == [["AAA", "BBB"]]
+        assert ohlcv_env["results"] == [("AAA", True, 2), ("BBB", True, 1)]
+
+    def test_failed_write_records_failures(self, ohlcv_env):
+        ohlcv_env["frames"] = {"AAA": _bars("AAA", "2024-01-02")}
+        ohlcv_env["fail_write"] = True
+        state: dict = {}
+
+        results = orchestrator.step_update(["AAA"], date(2024, 1, 2), state)
+
+        assert results == {"AAA": 0}
+        assert "AAA" in state["fetch_failures"]
+        assert ohlcv_env["results"] == [("AAA", False, 0)]

@@ -13,6 +13,10 @@ collection:
   # priority-onboarded outside this limit)
   batch_size: 50
 
+  # OHLCV symbols buffered per storage write (onboard, update, extend-history,
+  # backfill); each write rewrites every year partition the batch touches once
+  write_batch_symbols: 100
+
   # Options chain: tickers processed per run across the rolling cycle
   options_batch_size: 50
 
@@ -84,6 +88,7 @@ sources:
     ohlcv:         5
     options:       5
     fundamentals:  2
+    analyst_estimates: 2
     indices:       3
 
 # ---------------------------------------------------------------------------

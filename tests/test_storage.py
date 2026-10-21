@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from market_data.schema import DataSource, ReportTimeMarker
-from market_data.storage import read_table, write_table
+from market_data.storage import read_table, write_table, write_table_counts
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -168,6 +168,51 @@ class TestNonPartitionedTable:
         result = read_table("macro", tmp_path)
         # Only one row; value is from whichever write was kept by drop_duplicates (first)
         assert len(result) == 1
+
+
+
+# ---------------------------------------------------------------------------
+# write_table_counts — net-new rows per symbol
+# ---------------------------------------------------------------------------
+
+
+class TestWriteTableCounts:
+    def test_counts_new_rows_per_symbol(self, tmp_path):
+        df = pd.DataFrame([
+            _ohlcv_row("AAPL", datetime.date(2023, 12, 29)),
+            _ohlcv_row("AAPL", datetime.date(2024, 1, 2)),
+            _ohlcv_row("MSFT", datetime.date(2024, 1, 2)),
+        ])
+        assert write_table_counts(df, "ohlcv", tmp_path) == {"AAPL": 2, "MSFT": 1}
+
+    def test_existing_rows_are_not_counted_and_win(self, tmp_path):
+        write_table(pd.DataFrame([_ohlcv_row("AAPL", datetime.date(2024, 1, 2), 100.0)]),
+                    "ohlcv", tmp_path)
+        df = pd.DataFrame([
+            _ohlcv_row("AAPL", datetime.date(2024, 1, 2), 999.0),
+            _ohlcv_row("AAPL", datetime.date(2024, 1, 3)),
+            _ohlcv_row("MSFT", datetime.date(2024, 1, 2)),
+        ])
+        assert write_table_counts(df, "ohlcv", tmp_path) == {"AAPL": 1, "MSFT": 1}
+        stored = read_table("ohlcv", tmp_path, symbols=["AAPL"])
+        assert stored.loc[stored["period_start_date"] == datetime.date(2024, 1, 2),
+                          "close"].item() == 100.0
+
+    def test_symbol_with_only_duplicates_is_absent(self, tmp_path):
+        df = pd.DataFrame([_ohlcv_row("AAPL", datetime.date(2024, 1, 2))])
+        write_table(df, "ohlcv", tmp_path)
+        assert write_table_counts(df, "ohlcv", tmp_path) == {}
+
+    def test_marker_column_not_stored(self, tmp_path):
+        df = pd.DataFrame([_ohlcv_row("AAPL", datetime.date(2024, 1, 2))])
+        write_table_counts(df, "ohlcv", tmp_path)
+        write_table_counts(df, "ohlcv", tmp_path)
+        stored = pd.read_parquet(tmp_path / "ohlcv" / "year=2024" / "data.parquet")
+        assert list(stored.columns) == list(read_table("ohlcv", tmp_path).columns)
+        assert len(stored) == 1
+
+    def test_empty_frame_returns_empty_dict(self, tmp_path):
+        assert write_table_counts(pd.DataFrame(), "ohlcv", tmp_path) == {}
 
 
 # ---------------------------------------------------------------------------
