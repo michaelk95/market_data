@@ -27,21 +27,22 @@ from market_data.resilience import requests_retry
 
 logger = logging.getLogger(__name__)
 
-# iShares ETF holdings CSV endpoints (no auth required)
+# iShares ETF holdings CSV endpoints (no auth required). The older
+# ``1467271812596.ajax?fileType=csv`` endpoints now return the HTML product page.
 IWM_CSV_URL = (
     "https://www.ishares.com/us/products/239710/"
-    "ishares-russell-2000-etf/1467271812596.ajax"
-    "?fileType=csv&fileName=IWM_holdings&dataType=fund"
+    "ishares-russell-2000-etf/latest-holdings.csv"
 )
 
 IVV_CSV_URL = (
     "https://www.ishares.com/us/products/239726/"
-    "ishares-core-sp-500-etf/1467271812596.ajax"
-    "?fileType=csv&fileName=IVV_holdings&dataType=fund"
+    "ishares-core-sp-500-etf/latest-holdings.csv"
 )
 
-# iShares strips dots from dual-class ticker symbols (e.g. BRK.B → BRKB),
-# but yfinance requires hyphens (BRK-B). Map known cases explicitly.
+# latest-holdings.csv writes share classes with a space (BRK B); yfinance
+# requires a hyphen (BRK-B). Spaces and dots are normalised by
+# _SHARE_CLASS_SEP_RE; the legacy compact form (BRKB) is mapped explicitly.
+_SHARE_CLASS_SEP_RE = re.compile(r"[\s.]+")
 TICKER_CORRECTIONS: dict[str, str] = {
     "BRKB": "BRK-B",
     "BFB":  "BF-B",
@@ -69,6 +70,12 @@ def fetch_etf_holdings(url: str) -> pd.DataFrame:
     logger.info("Downloading ETF holdings from %s...", url[:60])
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
+
+    if resp.text.lstrip().startswith("<"):
+        raise ValueError(
+            f"iShares returned HTML instead of a holdings CSV for {url}. "
+            "The download endpoint may have moved."
+        )
 
     # The iShares CSV has a few header rows of metadata before the actual
     # column headers. We find the real header by looking for the 'Ticker' row.
@@ -113,7 +120,13 @@ def clean_holdings(df: pd.DataFrame, index_label: str) -> pd.DataFrame:
 
     # Normalize dual-class symbols from iShares compact format to yfinance format.
     df = df.copy()
-    df["Ticker"] = df["Ticker"].replace(TICKER_CORRECTIONS)
+    df["Ticker"] = (
+        df["Ticker"]
+        .astype(str)
+        .str.strip()
+        .str.replace(_SHARE_CLASS_SEP_RE, "-", regex=True)
+        .replace(TICKER_CORRECTIONS)
+    )
 
     # Parse market value — comes in as "$1,234,567.89" strings
     if "Market Value" in df.columns:
