@@ -108,7 +108,7 @@ class TestNormalize:
 
     def test_strips_timezone_from_index(self):
         """Dates have no timezone info after normalization."""
-        dates = pd.DatetimeIndex(["2024-01-02"], tz="US/Eastern")
+        dates = pd.DatetimeIndex(["2024-01-02"], tz="America/New_York")
         df = pd.DataFrame(
             {"Open": [100.0], "High": [102.0], "Low": [99.0], "Close": [101.0], "Volume": [1e6]},
             index=dates,
