@@ -16,6 +16,8 @@ All notable changes to this project will be documented here.
   date range and replaces those rows in one write. A re-download that
   covers too few stored dates, or breaks against the stored closes too
   often (a different security under the ticker), is rejected and logged.
+  Resolved splits are kept in `split_refetch_done` so the one-day overlap
+  between update windows does not re-download them.
   ADR 0002, research in `docs/research/split-adjustment.md`.
 
 ### Added

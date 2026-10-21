@@ -415,6 +415,26 @@ class TestStepUpdateSplits:
 
         assert state["split_refetch_pending"]["AAA"]["added"] == "2026-01-08"
 
+    def test_resolved_split_is_not_requeued(self, ohlcv_env):
+        # The update window overlaps the previous run by a day, so a split
+        # dated on the overlap comes back twice.
+        ohlcv_env["frames"] = {"AAA": _bars("AAA", "2026-01-08", n=1)}
+        ohlcv_env["splits"] = {"AAA": [(date(2026, 1, 8), 2.0)]}
+        state: dict = {"split_refetch_done": {"AAA": "2026-01-08"}}
+
+        orchestrator.step_update(["AAA"], date(2026, 1, 8), state)
+
+        assert state.get("split_refetch_pending", {}) == {}
+
+    def test_new_split_after_resolved_one_is_queued(self, ohlcv_env):
+        ohlcv_env["frames"] = {"AAA": _bars("AAA", "2026-01-08", n=1)}
+        ohlcv_env["splits"] = {"AAA": [(date(2026, 1, 8), 2.0)]}
+        state: dict = {"split_refetch_done": {"AAA": "2025-06-02"}}
+
+        orchestrator.step_update(["AAA"], date(2026, 1, 8), state)
+
+        assert "AAA" in state["split_refetch_pending"]
+
 
 @pytest.fixture()
 def refetch_env(tmp_path, monkeypatch):
@@ -455,6 +475,7 @@ class TestStepSplitRefetch:
 
         assert state["split_refetch_pending"] == {}
         assert _stored_closes("AAA", tmp_path) == FRESH_CLOSES
+        assert state["split_refetch_done"] == {"AAA": "2026-01-08"}
         assert _stored_closes("BBB", tmp_path) == STORED_CLOSES
 
     def test_download_error_stays_pending(self, refetch_env, tmp_path):

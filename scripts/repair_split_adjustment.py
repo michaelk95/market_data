@@ -33,8 +33,8 @@ on the stored date range), and not while the daily collector is writing.
 
 Usage
 -----
-    python scripts/repair_split_adjustment.py --since 2026-04-01           # dry run (default)
-    python scripts/repair_split_adjustment.py --since 2026-04-01 --apply   # back up, then replace
+    python scripts/repair_split_adjustment.py --since 2026-04-04           # dry run (default)
+    python scripts/repair_split_adjustment.py --since 2026-04-04 --apply   # back up, then replace
     python scripts/repair_split_adjustment.py --symbols BKNG CRWD --apply
 """
 

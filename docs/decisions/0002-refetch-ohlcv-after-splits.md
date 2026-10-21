@@ -47,6 +47,10 @@ Option 3.
     consistent;
   - once it fails the gate (logged as an error for the repair script);
   - after `splits.max_pending_days` (also logged as an error).
+  Its split date is then kept in `state["split_refetch_done"]`, and the
+  update step does not queue that split again. The update window overlaps
+  the previous run by a day, so the same split row can come back the next
+  night, and re-downloading it would waste a request.
 - A failed download or write keeps it pending, so it is retried every night.
   So does a re-download that still drops by the split ratio within
   `splits.jump_window_days` of the split date: Yahoo sometimes adjusts the

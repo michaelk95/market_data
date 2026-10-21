@@ -100,6 +100,7 @@ def load_state() -> dict:
             "options_cycle": raw.get("options_cycle", []),
             "fetch_failures": raw.get("fetch_failures", {}),
             "split_refetch_pending": raw.get("split_refetch_pending", {}),
+            "split_refetch_done": raw.get("split_refetch_done", {}),
         }
     return {
         "onboarded": [],
@@ -109,6 +110,7 @@ def load_state() -> dict:
         "options_cycle": [],
         "fetch_failures": {},
         "split_refetch_pending": {},
+        "split_refetch_done": {},
     }
 
 
@@ -492,7 +494,13 @@ def step_update(
 
 
 def _queue_split(state: dict, symbol: str, split_date: date, ratio: float) -> None:
-    """Queue *symbol* for a history re-download, keeping the date it was first queued."""
+    """Queue *symbol* for a history re-download, keeping the date it was first queued.
+
+    A split already resolved (``state["split_refetch_done"]``) is skipped: the
+    update window overlaps the previous run by a day, so it can come back.
+    """
+    if state.get("split_refetch_done", {}).get(symbol) == str(split_date):
+        return
     pending = state.setdefault("split_refetch_pending", {})
     added = pending.get(symbol, {}).get("added", str(date.today()))
     pending[symbol] = {"split_date": str(split_date), "ratio": ratio, "added": added}
@@ -517,6 +525,7 @@ def step_split_refetch(state: dict) -> set[str]:
 
     logger.info("SPLITS   re-downloading %d symbol(s)", len(pending))
     today = date.today()
+    resolved = dict(pending)  # minus whatever is still pending at the end
     frames: dict[str, pd.DataFrame] = {}
     for symbol, entry in list(pending.items()):
         hint = f"run scripts/repair_split_adjustment.py --symbols {symbol}"
@@ -557,6 +566,11 @@ def step_split_refetch(state: dict) -> set[str]:
                 del pending[symbol]
             logger.info("SPLITS   replaced %d rows for %s", rows, ", ".join(sorted(replaced)))
 
+    resolved = {s: e for s, e in resolved.items() if s not in pending}
+
+    done = state.setdefault("split_refetch_done", {})
+    for symbol, entry in resolved.items():
+        done[symbol] = entry["split_date"]
     state["split_refetch_pending"] = pending
     return replaced
 
