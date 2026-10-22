@@ -8,6 +8,8 @@ Functions
 fetch_history(symbol, years)        Full historical pull (default 10 years).
 fetch_max_history(symbol)           Full available history via period="max".
 fetch_incremental(symbol, since)    Pull data from a given date onward.
+fetch_incremental_with_splits(symbol, since)
+                                    Same, plus the stock splits in the window.
 fetch_date_range(symbol, start, end) Bounded historical pull for a date range.
 save_ticker_data(symbol, df, root)  Merge flat OHLCV rows into the bitemporal
                                     ``ohlcv`` (or ``indices``) table under the
@@ -152,6 +154,32 @@ def fetch_incremental(symbol: str, since: date) -> pd.DataFrame:
         actions=False,
     )
     return _normalize(raw, symbol)
+
+
+@yf_retry
+def fetch_incremental_with_splits(
+    symbol: str, since: date
+) -> tuple[pd.DataFrame, list[tuple[date, float]]]:
+    """
+    Like ``fetch_incremental``, but also return the stock splits in the window.
+
+    The same request asks yfinance for ``actions=True``; the ``Stock Splits``
+    column gives each split's date and ratio (2.0 for 2-for-1, 1/30 for a
+    1-for-30 reverse split).  The bars are normalized as usual, which drops
+    the action columns.
+    """
+    raw = yf.Ticker(symbol).history(
+        start=str(since),
+        end=str(date.today() + timedelta(days=1)),  # end is exclusive in yf
+        auto_adjust=True,
+        actions=True,
+    )
+    found: list[tuple[date, float]] = []
+    if "Stock Splits" in raw.columns:
+        rows = raw.loc[raw["Stock Splits"] > 0, "Stock Splits"]
+        days = pd.to_datetime(rows.index).tz_localize(None).date
+        found = [(day, float(ratio)) for day, ratio in zip(days, rows)]
+    return _normalize(raw, symbol), found
 
 
 @yf_retry

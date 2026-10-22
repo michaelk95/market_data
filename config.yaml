@@ -92,6 +92,36 @@ sources:
     indices:       3
 
 # ---------------------------------------------------------------------------
+# splits: re-downloading OHLCV history after a stock split (ADR 0002)
+# ---------------------------------------------------------------------------
+splits:
+  # Share of the stored dates a re-download must cover to replace them
+  min_coverage: 0.98
+
+  # More breaks than this in the stored/new close ratio means the ticker now
+  # points at a different security; the stored rows are kept
+  max_breaks: 3
+
+  # |day-over-day change| in log(stored close / new close) that counts as a break
+  break_threshold: 0.15
+
+  # Relative tolerance when matching a price jump to a split ratio
+  ratio_tolerance: 0.05
+
+  # Days either side of yfinance's split date to look for the price jump
+  jump_window_days: 5
+
+  # Days a split stays queued (e.g. Yahoo not adjusted yet, failed downloads)
+  # before it is dropped and left to scripts/repair_split_adjustment.py
+  max_pending_days: 10
+
+  # Split factors (and reverses) scripts/repair_split_adjustment.py looks for
+  candidate_factors: [1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100]
+
+  # Where scripts/repair_split_adjustment.py caches its downloads
+  repair_cache_dir: "logs/split_repair_cache"
+
+# ---------------------------------------------------------------------------
 # resilience: retry and failure-quarantine settings
 # ---------------------------------------------------------------------------
 resilience:

@@ -24,6 +24,9 @@ write_table(df, table_name, data_dir) -> int
 write_table_counts(df, table_name, data_dir) -> dict[str, int]
     Same merge; return net new rows per symbol (symbols with none are absent).
 
+replace_rows(df, table_name, data_dir) -> int
+    Same merge, but incoming rows win over stored rows with the same keys.
+
 read_table(table_name, data_dir, *, start_date, end_date,
            symbols, series_ids, columns) -> pd.DataFrame
     Read rows from the table, with optional pushdown-style filters.
@@ -51,6 +54,7 @@ __all__ = [
     "read_macro_as_of",
     "read_macro_revisions",
     "read_table",
+    "replace_rows",
     "write_table",
     "write_table_counts",
 ]
@@ -102,6 +106,21 @@ def write_table_counts(
         return {}
     counts = pd.concat(added, ignore_index=True)["symbol"].value_counts()
     return {str(symbol): int(n) for symbol, n in counts.items()}
+
+
+def replace_rows(
+    df: pd.DataFrame,
+    table_name: str,
+    data_dir: Path,
+) -> int:
+    """Merge *df* into the table like ``write_table``, but let *df* win.
+
+    Stored rows with the same dedup keys as a row of *df* are overwritten;
+    every other stored row is kept.  Used to replace a symbol's history after
+    a re-download (e.g. after a stock split).  Returns the number of rows of
+    *df* written.
+    """
+    return sum(len(added) for added in _write(df, table_name, data_dir, keep="last"))
 
 
 def read_table(
@@ -295,8 +314,14 @@ def read_macro_revisions(
 # ---------------------------------------------------------------------------
 
 
-def _write(df: pd.DataFrame, table_name: str, data_dir: Path) -> list[pd.DataFrame]:
-    """Merge *df* into *table_name*; return the rows actually added, per file."""
+def _write(
+    df: pd.DataFrame, table_name: str, data_dir: Path, keep: str = "first"
+) -> list[pd.DataFrame]:
+    """Merge *df* into *table_name*; return the rows actually added, per file.
+
+    *keep* is passed to ``_merge_write``: "first" keeps stored rows, "last"
+    lets incoming rows replace them.
+    """
     if table_name not in TABLE_SCHEMAS:
         raise ValueError(
             f"Unknown table '{table_name}'. Valid names: {sorted(TABLE_SCHEMAS)}"
@@ -313,13 +338,13 @@ def _write(df: pd.DataFrame, table_name: str, data_dir: Path) -> list[pd.DataFra
 
     if not partition_cols:
         # Non-partitioned table: single data.parquet
-        return [_merge_write(table_dir / "data.parquet", df, dedup_keys, sort_keys)]
+        return [_merge_write(table_dir / "data.parquet", df, dedup_keys, sort_keys, keep)]
 
     # Partitioned by year extracted from period_start_date
     years = pd.to_datetime(df["period_start_date"]).dt.year
     return [
         _merge_write(
-            table_dir / f"year={int(year)}" / "data.parquet", group, dedup_keys, sort_keys
+            table_dir / f"year={int(year)}" / "data.parquet", group, dedup_keys, sort_keys, keep
         )
         for year, group in df.groupby(years)
     ]
@@ -343,11 +368,13 @@ def _merge_write(
     new_df: pd.DataFrame,
     dedup_keys: list[str],
     sort_keys: list[str],
+    keep: str = "first",
 ) -> pd.DataFrame:
     """Merge *new_df* into the parquet at *path*, dedup, sort, and save atomically.
 
-    Stored rows come first, so they win over incoming rows with the same
-    *dedup_keys*.  Returns the rows of *new_df* that were actually added.
+    Stored rows come first, so with ``keep="first"`` they win over incoming
+    rows with the same *dedup_keys*; ``keep="last"`` lets the incoming rows
+    win.  Returns the rows of *new_df* that were actually written.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -360,7 +387,7 @@ def _merge_write(
 
     combined = (
         combined
-        .drop_duplicates(subset=dedup_keys)
+        .drop_duplicates(subset=dedup_keys, keep=keep)
         .sort_values(sort_keys)
         .reset_index(drop=True)
     )

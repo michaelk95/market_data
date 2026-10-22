@@ -30,6 +30,7 @@ class TestLoadState:
         assert state["last_ticker_refresh"] is None
         assert state["last_fundamentals_run"] is None
         assert state["options_cycle"] == []
+        assert state["split_refetch_pending"] == {}
 
     def test_reads_onboarded_list(self, tmp_path, monkeypatch):
         state_file = tmp_path / "state.json"
@@ -295,8 +296,11 @@ def ohlcv_env(tmp_path, monkeypatch):
             raise frame
         return frame
 
+    def fake_fetch_with_splits(symbol, **kwargs):
+        return fake_fetch(symbol, **kwargs), env.get("splits", {}).get(symbol, [])
+
     monkeypatch.setattr(orchestrator, "fetch_history", fake_fetch)
-    monkeypatch.setattr(orchestrator, "fetch_incremental", fake_fetch)
+    monkeypatch.setattr(orchestrator, "fetch_incremental_with_splits", fake_fetch_with_splits)
     return env
 
 
@@ -367,3 +371,189 @@ class TestStepUpdate:
         assert results == {"AAA": 0}
         assert "AAA" in state["fetch_failures"]
         assert ohlcv_env["results"] == [("AAA", False, 0)]
+
+
+# ---------------------------------------------------------------------------
+# Splits: step_update() queues them, step_split_refetch() re-downloads
+# ---------------------------------------------------------------------------
+
+# A 2:1 split on the 4th bar (2026-01-08): stored bars before it are on the
+# old basis, a fresh download has them halved.
+STORED_CLOSES = [100.0, 102.0, 104.0, 52.0, 53.0]
+FRESH_CLOSES = [50.0, 51.0, 52.0, 52.0, 53.0]
+
+
+def _closes(symbol: str, closes: list[float], start: str = "2026-01-05") -> pd.DataFrame:
+    frame = _bars(symbol, start, n=len(closes))
+    for col in ("open", "high", "low", "close"):
+        frame[col] = closes
+    return frame
+
+
+def _pending(symbol: str, added: str) -> dict:
+    return {symbol: {"split_date": "2026-01-08", "ratio": 2.0, "added": added}}
+
+
+class TestStepUpdateSplits:
+    def test_split_queues_symbol(self, ohlcv_env):
+        ohlcv_env["frames"] = {s: _bars(s, "2026-01-08", n=1) for s in ("AAA", "BBB")}
+        ohlcv_env["splits"] = {"AAA": [(date(2026, 1, 8), 2.0)]}
+        state: dict = {}
+
+        orchestrator.step_update(["AAA", "BBB"], date(2026, 1, 8), state)
+
+        assert state["split_refetch_pending"] == {
+            "AAA": {"split_date": "2026-01-08", "ratio": 2.0, "added": str(date.today())},
+        }
+
+    def test_requeue_keeps_first_added_date(self, ohlcv_env):
+        ohlcv_env["frames"] = {"AAA": _bars("AAA", "2026-01-08", n=1)}
+        ohlcv_env["splits"] = {"AAA": [(date(2026, 1, 8), 2.0)]}
+        state: dict = {"split_refetch_pending": _pending("AAA", added="2026-01-08")}
+
+        orchestrator.step_update(["AAA"], date(2026, 1, 8), state)
+
+        assert state["split_refetch_pending"]["AAA"]["added"] == "2026-01-08"
+
+    def test_resolved_split_is_not_requeued(self, ohlcv_env):
+        # The update window overlaps the previous run by a day, so a split
+        # dated on the overlap comes back twice.
+        ohlcv_env["frames"] = {"AAA": _bars("AAA", "2026-01-08", n=1)}
+        ohlcv_env["splits"] = {"AAA": [(date(2026, 1, 8), 2.0)]}
+        state: dict = {"split_refetch_done": {"AAA": "2026-01-08"}}
+
+        orchestrator.step_update(["AAA"], date(2026, 1, 8), state)
+
+        assert state.get("split_refetch_pending", {}) == {}
+
+    def test_new_split_after_resolved_one_is_queued(self, ohlcv_env):
+        ohlcv_env["frames"] = {"AAA": _bars("AAA", "2026-01-08", n=1)}
+        ohlcv_env["splits"] = {"AAA": [(date(2026, 1, 8), 2.0)]}
+        state: dict = {"split_refetch_done": {"AAA": "2025-06-02"}}
+
+        orchestrator.step_update(["AAA"], date(2026, 1, 8), state)
+
+        assert "AAA" in state["split_refetch_pending"]
+
+
+@pytest.fixture()
+def refetch_env(tmp_path, monkeypatch):
+    """Store AAA and BBB with an unadjusted split; fake the re-download."""
+    from market_data import splits
+
+    monkeypatch.setattr(orchestrator, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(orchestrator, "SLEEP_BETWEEN_CALLS", 0)
+    save_ticker_data("AAA", _closes("AAA", STORED_CLOSES), tmp_path)
+    save_ticker_data("BBB", _closes("BBB", STORED_CLOSES), tmp_path)
+    env: dict = {"frames": {}, "calls": []}
+
+    def fake_range(symbol, start, end=None):
+        env["calls"].append(symbol)
+        frame = env["frames"][symbol]
+        if isinstance(frame, Exception):
+            raise frame
+        return frame
+
+    monkeypatch.setattr(splits, "fetch_date_range", fake_range)
+    return env
+
+
+def _stored_closes(symbol: str, data_dir) -> list[float]:
+    df = read_table("ohlcv", data_dir, symbols=[symbol]).sort_values("period_start_date")
+    return df["close"].tolist()
+
+
+TODAY = str(date.today())
+
+
+class TestStepSplitRefetch:
+    def test_replaces_history_and_clears_pending(self, refetch_env, tmp_path):
+        refetch_env["frames"] = {"AAA": _closes("AAA", FRESH_CLOSES)}
+        state = {"split_refetch_pending": _pending("AAA", TODAY)}
+
+        assert orchestrator.step_split_refetch(state) == {"AAA"}
+
+        assert state["split_refetch_pending"] == {}
+        assert _stored_closes("AAA", tmp_path) == FRESH_CLOSES
+        assert state["split_refetch_done"] == {"AAA": "2026-01-08"}
+        assert _stored_closes("BBB", tmp_path) == STORED_CLOSES
+
+    def test_download_error_stays_pending(self, refetch_env, tmp_path):
+        refetch_env["frames"] = {"AAA": RuntimeError("timeout")}
+        state = {"split_refetch_pending": _pending("AAA", TODAY)}
+
+        assert orchestrator.step_split_refetch(state) == set()
+
+        assert "AAA" in state["split_refetch_pending"]
+        assert _stored_closes("AAA", tmp_path) == STORED_CLOSES
+
+    def test_write_error_stays_pending(self, refetch_env, monkeypatch):
+        from market_data import splits
+
+        refetch_env["frames"] = {"AAA": _closes("AAA", FRESH_CLOSES)}
+        state = {"split_refetch_pending": _pending("AAA", TODAY)}
+
+        def boom(df, table, data_dir):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(splits, "replace_rows", boom)
+        assert orchestrator.step_split_refetch(state) == set()
+        assert "AAA" in state["split_refetch_pending"]
+
+    def test_gate_rejection_leaves_data_and_clears_pending(self, refetch_env, tmp_path, caplog):
+        refetch_env["frames"] = {"AAA": _closes("AAA", FRESH_CLOSES[:2])}
+        state = {"split_refetch_pending": _pending("AAA", TODAY)}
+
+        assert orchestrator.step_split_refetch(state) == set()
+
+        assert state["split_refetch_pending"] == {}
+        assert _stored_closes("AAA", tmp_path) == STORED_CLOSES
+        assert "repair_split_adjustment" in caplog.text
+
+    def test_unadjusted_download_stays_pending(self, refetch_env, tmp_path):
+        # Yahoo has not adjusted the history yet: the download still jumps.
+        refetch_env["frames"] = {"AAA": _closes("AAA", STORED_CLOSES)}
+        state = {"split_refetch_pending": _pending("AAA", TODAY)}
+
+        assert orchestrator.step_split_refetch(state) == set()
+        assert "AAA" in state["split_refetch_pending"]
+
+    def test_already_consistent_is_cleared_without_write(self, refetch_env, tmp_path, monkeypatch):
+        from market_data import splits
+
+        save_ticker_data("CCC", _closes("CCC", FRESH_CLOSES), tmp_path)
+        refetch_env["frames"] = {"CCC": _closes("CCC", FRESH_CLOSES)}
+        state = {"split_refetch_pending": _pending("CCC", TODAY)}
+        monkeypatch.setattr(splits, "replace_rows", lambda *a: pytest.fail("no write expected"))
+
+        assert orchestrator.step_split_refetch(state) == set()
+        assert state["split_refetch_pending"] == {}
+
+    def test_expired_entry_is_dropped_without_download(self, refetch_env, caplog):
+        state = {"split_refetch_pending": _pending("AAA", added="2020-01-01")}
+
+        assert orchestrator.step_split_refetch(state) == set()
+
+        assert state["split_refetch_pending"] == {}
+        assert refetch_env["calls"] == []
+        assert "repair_split_adjustment" in caplog.text
+
+    def test_one_write_for_all_symbols(self, refetch_env, monkeypatch):
+        from market_data import splits
+
+        refetch_env["frames"] = {s: _closes(s, FRESH_CLOSES) for s in ("AAA", "BBB")}
+        state = {"split_refetch_pending": {**_pending("AAA", TODAY), **_pending("BBB", TODAY)}}
+        writes = []
+        real = splits.replace_rows
+
+        def spy(df, table, data_dir):
+            writes.append(sorted(df["symbol"].unique()))
+            return real(df, table, data_dir)
+
+        monkeypatch.setattr(splits, "replace_rows", spy)
+        assert orchestrator.step_split_refetch(state) == {"AAA", "BBB"}
+        assert writes == [["AAA", "BBB"]]
+
+    def test_nothing_pending_does_nothing(self, refetch_env):
+        assert orchestrator.step_split_refetch({}) == set()
+        assert refetch_env["calls"] == []
