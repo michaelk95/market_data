@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [0.13.2] — 2026-10-20 ([#90](https://github.com/michaelk95/market_data/pull/90))
+
+### Changed
+- Test docstring in `tests/test_migrate_flat_tables.py` no longer says MD-10
+  is pending; the collector has written the bitemporal tables since 0.11.0.
+
+---
+
 ## [0.13.1] — 2026-10-20 ([#89](https://github.com/michaelk95/market_data/pull/89))
 
 ### Added
