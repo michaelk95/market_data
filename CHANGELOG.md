@@ -28,6 +28,14 @@ All notable changes to this project will be documented here.
   `logs/split_repair_cache`.
 - `splits:` section in `config.yaml` (gate thresholds, pending days,
   candidate factors).
+  
+---
+
+## [0.13.2] — 2026-10-20 ([#90](https://github.com/michaelk95/market_data/pull/90))
+
+### Changed
+- Test docstring in `tests/test_migrate_flat_tables.py` no longer says MD-10
+  is pending; the collector has written the bitemporal tables since 0.11.0.
 
 ---
 

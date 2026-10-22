@@ -188,7 +188,7 @@ class TestMigrateOhlcv:
         assert len(read_table("ohlcv", flat_data)) == 8
 
     def test_rerun_picks_up_rows_added_to_flat_files(self, flat_data: Path) -> None:
-        """The old collector may keep writing flat files until MD-10 is deployed."""
+        """Rows the old collector adds to flat files after a first migration are picked up."""
         migrate_flat_tables.run("ohlcv", flat_data)
         _write_flat(
             flat_data / "ohlcv" / "AAPL.parquet",
